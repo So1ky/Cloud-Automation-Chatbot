@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# AI Engine - 로컬 생성 데이터 (GitHub 제외)
+ai_engine/chroma_db/
+ai_engine/docs/
+__pycache__/
+*.pyc
+.DS_Store
