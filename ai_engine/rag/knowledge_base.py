@@ -2,13 +2,14 @@
 
 개선 사항:
 1. BP 섹션 경계 인식 스마트 청킹 + pillar/BP번호/AWS서비스 메타데이터
-2. Multi-query 생성 (요구사항 → 4개 검색 쿼리)
+2. 번역 + Multi-query 생성을 LLM 1회 호출로 통합 (Latency 절감)
 3. 하이브리드 검색 (벡터 60% + BM25 40%)
-4. Cross-encoder Reranker로 최종 정밀 재점수화
+4. Cross-encoder Reranker로 최종 정밀 재점수화 (max_length=512 명시)
 """
 
 import re
 from pathlib import Path
+from typing import List
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.retrievers import BM25Retriever
@@ -18,6 +19,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_classic.retrievers import EnsembleRetriever
+from pydantic import BaseModel, Field
 
 AI_ENGINE_DIR = Path(__file__).parent.parent
 DOCS_DIR = AI_ENGINE_DIR / "docs"
@@ -166,7 +168,8 @@ def _get_reranker():
     if _reranker_cache is None:
         from sentence_transformers import CrossEncoder
         print(f"[RAG] Reranker 로드 중: {RERANKER_MODEL}")
-        _reranker_cache = CrossEncoder(RERANKER_MODEL)
+        # max_length=512 명시: 모델 한계 초과 시 뒷부분이 잘린 채 점수화되는 것을 방지
+        _reranker_cache = CrossEncoder(RERANKER_MODEL, max_length=512)
         print("[RAG] Reranker 로드 완료")
     return _reranker_cache
 
@@ -176,40 +179,42 @@ def rerank_documents(query: str, docs: list, top_k: int = 5) -> list:
     if not docs:
         return []
     reranker = _get_reranker()
-    pairs = [(query, doc.page_content) for doc in docs]
+    # 청크를 1500자로 truncate: 쿼리 포함 512토큰 한계 내 안전하게 유지
+    pairs = [(query, doc.page_content[:1500]) for doc in docs]
     scores = reranker.predict(pairs)
     scored = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
     return [doc for _, doc in scored[:top_k]]
 
 
-def translate_query(query: str) -> str:
-    """한국어 쿼리를 영어로 번역해 검색 정확도를 높인다."""
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    response = llm.invoke([
-        SystemMessage(content=(
-            "You are a cloud infrastructure expert and translator. "
-            "Translate the following query to English for searching AWS Well-Architected Framework documentation. "
-            "Return only the translated text, nothing else."
-        )),
-        HumanMessage(content=query),
-    ])
-    return response.content.strip()
+# ─── LLM 쿼리 확장 (번역 + Multi-query 1회 통합 호출) ────────────────────────
+
+class _QueryExpansion(BaseModel):
+    """번역 + Multi-query 생성을 LLM 1회 호출로 처리하기 위한 스키마."""
+    translated_query: str = Field(description="Korean query translated to English")
+    search_queries: List[str] = Field(description="4 specific English search queries for AWS Well-Architected Framework")
 
 
-def generate_multi_queries(requirement: str) -> list[str]:
-    """사용자 요구사항에서 4개의 세분화된 검색 쿼리를 영어로 생성한다."""
+def expand_query(requirement: str) -> tuple[str, list[str]]:
+    """한국어 요구사항을 영어로 번역하고 4개의 검색 쿼리를 LLM 1회 호출로 생성한다.
+
+    Returns:
+        (translated_query, [query1, query2, query3, query4])
+    """
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
-    response = llm.invoke([
+    structured_llm = llm.with_structured_output(_QueryExpansion)
+
+    result: _QueryExpansion = structured_llm.invoke([
         SystemMessage(content=(
-            "You are an AWS architect. Given a cloud infrastructure requirement, "
-            "generate exactly 4 specific English search queries to find relevant AWS Well-Architected Framework guidance.\n"
-            "Focus on: security, reliability, cost optimization, and performance aspects.\n"
-            "Return only the 4 queries, one per line, no numbering or bullets."
+            "You are an AWS cloud infrastructure expert. "
+            "Given a cloud infrastructure requirement (possibly in Korean), do two things:\n"
+            "1. Translate it to English.\n"
+            "2. Generate exactly 4 specific English search queries targeting different aspects: "
+            "security, reliability, cost optimization, and performance efficiency.\n"
+            "Queries must be suitable for searching the AWS Well-Architected Framework documentation."
         )),
         HumanMessage(content=requirement),
     ])
-    queries = [q.strip() for q in response.content.strip().split("\n") if q.strip()]
-    return queries[:4]
+    return result.translated_query, result.search_queries[:4]
 
 
 # ─── 메인 검색 함수 ───────────────────────────────────────────────────────────
@@ -222,12 +227,9 @@ def search_knowledge_base(query: str, k: int = 8, top_k: int = 5) -> str:
         k: 쿼리당 1차 검색 후보 수
         top_k: Reranker 후 최종 반환 수
     """
-    # 1. 원본 쿼리 번역
-    translated_original = translate_query(query)
-    print(f"[RAG] 원본 쿼리 번역: {translated_original}")
-
-    # 2. Multi-query 생성 (4개)
-    multi_queries = generate_multi_queries(query)
+    # 1. 번역 + Multi-query 생성 (LLM 1회 호출로 통합)
+    translated_original, multi_queries = expand_query(query)
+    print(f"[RAG] 번역: {translated_original}")
     print(f"[RAG] Multi-query {len(multi_queries)}개 생성")
     all_queries = [translated_original] + multi_queries
 

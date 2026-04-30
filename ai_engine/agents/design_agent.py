@@ -1,11 +1,12 @@
-"""설계 에이전트: 사용자 요구사항 + RAG 컨텍스트 → YAML 아키텍처 명세 생성."""
+"""설계 에이전트: 사용자 요구사항 + RAG 컨텍스트 → 구조화된 아키텍처 명세 생성."""
 
-import re
-
+import yaml
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from openai import APIConnectionError, APITimeoutError, RateLimitError
 
 from ai_engine.rag.knowledge_base import search_knowledge_base
+from ai_engine.state.architecture_schema import ArchitectureSpec
 from ai_engine.state.graph_state import GraphState
 
 SYSTEM_PROMPT = """You are an expert AWS cloud infrastructure architect.
@@ -13,139 +14,57 @@ Your job is to design the optimal AWS architecture based on the user's requireme
 
 You MUST follow these rules:
 1. Always base your design on the AWS Well-Architected Framework best practices provided in the context.
-2. Output the final architecture ONLY as a valid YAML block, wrapped in ```yaml ... ```.
-3. Do NOT include any explanation outside the YAML block.
-4. The YAML must follow this exact structure:
+2. Fill in ALL required fields. For optional sections, include them ONLY when the user's requirements actually need them.
+3. The region is always "ap-northeast-2" unless the user specifies otherwise.
 
-```yaml
-architecture:
-  name: "<project name>"
-  description: "<brief description>"
-  region: "ap-northeast-2"
-  vpc:
-    cidr: "10.0.0.0/16"
-    subnets:
-      - name: "<subnet name>"
-        type: "public"    # public or private
-        cidr: "10.0.1.0/24"
-        az: "ap-northeast-2a"
-  networking:             # NAT/IGW/VPN 필요한 경우만 포함
-    nat_gateway:
-      - subnet: "<public subnet name>"
-    internet_gateway: true
-  compute:
-    - type: "EC2"         # EC2 | ECS | EKS | Lambda | Fargate
-      name: "<name>"
-      instance_type: "t3.micro"
-      count: 1
-      subnet: "<subnet name>"
-  auto_scaling:           # 오토스케일링 필요한 경우만 포함
-    - target: "<compute name>"
-      min_capacity: 1
-      max_capacity: 4
-      metric: "CPUUtilization"   # CPUUtilization | RequestCount | MemoryUtilization
-      target_value: 70
-  container_registry:     # 컨테이너 이미지 관리 필요한 경우만 포함
-    - type: "ECR"
-      name: "<repository name>"
-  api_gateway:            # API 엔드포인트 필요한 경우만 포함
-    - type: "APIGateway"
-      name: "<name>"
-      protocol: "HTTP"    # HTTP | REST | WebSocket
-      target: "<Lambda name or ALB name>"
-  load_balancer:          # 로드밸런서 필요한 경우만 포함
-    - type: "ALB"         # ALB | NLB
-      name: "<name>"
-      subnet: "<subnet name>"
-  database:               # 데이터베이스 필요한 경우만 포함
-    - type: "RDS"         # RDS | DynamoDB | ElastiCache | OpenSearch
-      name: "<name>"
-      engine: "mysql"     # mysql | postgres | aurora | (DynamoDB는 생략)
-      instance_class: "db.t3.micro"
-      multi_az: false     # true: 고가용성 필요 시
-      subnet: "<subnet name>"
-  cache:                  # 캐시 레이어 필요한 경우만 포함
-    - type: "ElastiCache"
-      engine: "redis"     # redis | memcached
-      node_type: "cache.t3.micro"
-      subnet: "<subnet name>"
-  streaming:              # 스트리밍/메시지 큐 필요한 경우만 포함
-    - type: "Kinesis"     # Kinesis | KinesisFirehose | MSK
-      name: "<stream name>"
-      shard_count: 1
-  messaging:              # 비동기 메시징 필요한 경우만 포함
-    - type: "SQS"         # SQS | SNS | EventBridge
-      name: "<queue/topic name>"
-      fifo: false         # true: 순서 보장 필요 시 (SQS만)
-  storage:                # 스토리지 필요한 경우만 포함
-    - type: "S3"          # S3 | EFS
-      name: "<bucket name>"
-      versioning: false
-  cdn:                    # CDN 필요한 경우만 포함
-    - type: "CloudFront"
-      origin: "<S3 bucket name or ALB name>"
-  dns:                    # 도메인 관리 필요한 경우만 포함
-    - type: "Route53"
-      domain: "<example.com>"
-      record_type: "A"    # A | CNAME | ALIAS
-      target: "<CloudFront domain or ALB DNS>"
-  auth:                   # 사용자 인증 필요한 경우만 포함
-    - type: "Cognito"
-      user_pool: "<pool name>"
-      app_client: "<client name>"
-  secrets:                # 시크릿/설정 관리 필요한 경우만 포함
-    - type: "SecretsManager"   # SecretsManager | ParameterStore
-      name: "<secret name>"
-  security:               # 보안 서비스 필요한 경우만 포함
-    waf: true
-    shield: false         # true: DDoS 고급 보호 필요 시
-    guard_duty: true
-  monitoring:             # 모니터링/로깅 구성
-    - type: "CloudWatch"
-      alarms:
-        - metric: "CPUUtilization"
-          threshold: 80
-    log_groups:
-      - name: "<log group name>"
-  security_groups:
-    - name: "<sg name>"
-      description: "<description>"
-      inbound:
-        - port: 80
-          protocol: "tcp"
-          source: "0.0.0.0/0"
-        - port: 443
-          protocol: "tcp"
-          source: "0.0.0.0/0"
-  iam:                    # IAM 역할 필요한 경우만 포함
-    - name: "<role name>"
-      description: "<description>"
-      policies:
-        - "<policy name>"
-```
+Subnet assignment rules:
+4. load_balancer.subnets must contain 2+ PUBLIC subnet names in different AZs (ALB requires multi-AZ).
+5. compute.subnets for EKS/ECS must contain 2+ PRIVATE subnet names in different AZs for high availability.
+6. compute.subnets for EC2/Lambda can be a single subnet.
+7. database.subnets must always list PRIVATE subnet names only.
+8. Always include nat_gateway in networking when private subnets need internet access.
 
-5. Include ONLY the sections the user actually needs. Omit everything else.
-6. Always include load_balancer when compute count > 1 or auto_scaling is enabled.
-7. Always set multi_az: true for database when high availability is required.
-8. Always choose cost-efficient instance types unless the user specifies otherwise.
-9. Always include at least one security_group with appropriate inbound rules.
-10. Always include nat_gateway in networking when private subnets need internet access.
-11. Use api_gateway when Lambda is the compute type for HTTP endpoints.
-12. Use streaming for real-time data pipelines (Kinesis), messaging for async tasks (SQS/SNS).
-13. When user mentions security or internal system, set security_groups source to VPC CIDR (e.g. "10.0.0.0/16") instead of "0.0.0.0/0", and include security section with waf and guard_duty.
-14. Always include database section when the workload clearly needs persistent data storage (e.g. ERP, web app, backend server).
-15. When user mentions private subnets, always place database and application servers in private subnets.
+Auto Scaling rules:
+9. auto_scaling.target must EXACTLY match the name field of one of the compute resources defined in the compute list.
+   Example: if compute name is "AppServer", then auto_scaling target must be "AppServer", not a port number or any other value.
+10. Always include load_balancer when auto_scaling is enabled or compute count > 1.
+
+Security Group rules:
+11. When external access is needed (e.g. public-facing web service), create SEPARATE security groups:
+    - One for the ALB (source: "0.0.0.0/0", ports 80/443) for external traffic
+    - One for internal compute/DB resources (source: VPC CIDR e.g. "10.0.0.0/16") for internal traffic
+12. When the user mentions security, internal system, or private-only access, set ALL security group sources to VPC CIDR ("10.0.0.0/16") and include waf=true and guard_duty=true in security section.
+
+Service placement rules:
+13. Always include database section when the workload clearly needs persistent data storage (e.g. ERP, web app, backend server).
+14. DynamoDB must ALWAYS be placed in the database section, NEVER in storage. storage only allows S3 or EFS.
+15. Use api_gateway ONLY when Lambda handles HTTP/REST requests from external clients. Do NOT add api_gateway for event-driven Lambda (e.g. triggered by Kinesis, S3 events, SQS).
+16. Use streaming for real-time data pipelines (Kinesis), messaging for async tasks (SQS/SNS).
+17. Always set multi_az: true for database when high availability is required.
+18. Always choose cost-efficient instance types unless the user specifies otherwise.
+
+The YAML structure follows these types:
+- compute.type: EC2 | ECS | EKS | Lambda | Fargate
+- database.type: RDS | DynamoDB | ElastiCache | OpenSearch
+- storage.type: S3 | EFS  (DynamoDB is NOT a storage type)
+- messaging.type: SQS | SNS | EventBridge
+- streaming.type: Kinesis | KinesisFirehose | MSK
 """
 
 
 def design_node(state: GraphState) -> GraphState:
-    """LangGraph 노드: RAG 검색 → GPT-4o mini 호출 → YAML 파싱."""
+    """LangGraph 노드: RAG 검색 → GPT-4o mini (structured output) → YAML 변환."""
     user_requirements = state["user_requirements"]
 
     print("[설계 에이전트] RAG 검색 중...")
-    rag_context = search_knowledge_base(user_requirements)
+    try:
+        rag_context = search_knowledge_base(user_requirements)
+    except Exception as e:
+        print(f"[설계 에이전트] RAG 검색 실패: {e}")
+        rag_context = "Well-Architected Framework 문서를 검색하지 못했습니다."
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    structured_llm = llm.with_structured_output(ArchitectureSpec)
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
@@ -160,10 +79,20 @@ def design_node(state: GraphState) -> GraphState:
     ]
 
     print("[설계 에이전트] GPT-4o mini 호출 중...")
-    response: AIMessage = llm.invoke(messages)
-    raw_output = response.content
+    try:
+        spec: ArchitectureSpec = structured_llm.invoke(messages)
+    except RateLimitError as e:
+        raise RuntimeError(f"OpenAI API 요청 한도 초과: {e}") from e
+    except APITimeoutError as e:
+        raise RuntimeError(f"OpenAI API 타임아웃: {e}") from e
+    except APIConnectionError as e:
+        raise RuntimeError(f"OpenAI API 연결 실패: {e}") from e
+    except Exception as e:
+        raise RuntimeError(f"LLM 호출 중 오류 발생: {e}") from e
 
-    yaml_output = _extract_yaml(raw_output)
+    spec_dict = spec.model_dump(exclude_none=True)
+    yaml_output = yaml.dump(spec_dict, allow_unicode=True, sort_keys=False, default_flow_style=False)
+
     print("[설계 에이전트] YAML 생성 완료")
 
     return {
@@ -172,14 +101,6 @@ def design_node(state: GraphState) -> GraphState:
         "yaml_output": yaml_output,
         "messages": state.get("messages", []) + [
             HumanMessage(content=user_requirements),
-            AIMessage(content=raw_output),
+            AIMessage(content=yaml_output),
         ],
     }
-
-
-def _extract_yaml(text: str) -> str:
-    """LLM 응답에서 YAML 코드 블록을 추출한다."""
-    match = re.search(r"```yaml\s*(.*?)```", text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return text.strip()
