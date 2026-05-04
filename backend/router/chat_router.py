@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 import logging
-from backend.shcema.chat_schema import ChatRequest, ChatResponse
+from backend.schema.chat_schema import ChatRequest, ChatResponse
 from backend.service.design_service import design
 from backend.service.diagram_service import generate_diagram
 

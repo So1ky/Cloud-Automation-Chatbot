@@ -4,7 +4,7 @@ from fastapi import HTTPException
 
 from ai_engine.graph import run_design_agent
 from ai_engine.agents.design.converter import convert_to_diagram_yaml
-from backend.shcema.design_schema import DesignRequest, DesignResponse
+from backend.schema.design_schema import DesignRequest, DesignResponse
 
 # 로깅 설정 (에러 확인용)
 logging.basicConfig(level=logging.INFO)
