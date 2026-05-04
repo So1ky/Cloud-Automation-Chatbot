@@ -2,7 +2,7 @@
 
 from langgraph.graph import END, START, StateGraph
 
-from ai_engine.agents.design_agent import design_node
+from ai_engine.agents.design.agent import design_node
 from ai_engine.state.graph_state import GraphState
 
 

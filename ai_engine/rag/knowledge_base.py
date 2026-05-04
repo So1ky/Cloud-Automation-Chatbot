@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 AI_ENGINE_DIR = Path(__file__).parent.parent
 DOCS_DIR = AI_ENGINE_DIR / "docs"
-CHROMA_PERSIST_DIR = AI_ENGINE_DIR / "chroma_db"
+CHROMA_PERSIST_DIR = Path(__file__).parent / "chroma_db"
 COLLECTION_NAME = "well_architected"
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-12-v2"
 
