@@ -35,7 +35,10 @@ class ComputeInstance(BaseModel):
     name: str
     instance_type: Optional[str] = None
     count: Optional[int] = None
-    subnets: List[str] = Field(description="List of subnet names. Use multiple subnets for EKS/ECS Multi-AZ.")
+    subnets: Optional[List[str]] = Field(
+        default=None,
+        description="Subnet names. Required for EC2/ECS/EKS/Fargate inside VPC. Leave null for Lambda without VPC."
+    )
 
 
 class AutoScaling(BaseModel):
