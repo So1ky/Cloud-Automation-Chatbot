@@ -31,6 +31,7 @@ VPC usage rules:
 Subnet assignment rules:
 6. load_balancer.subnets must contain 2+ PUBLIC subnet names in different AZs (ALB requires multi-AZ).
 7. compute.subnets for EKS/ECS must contain 2+ PRIVATE subnet names in different AZs for high availability.
+   NEVER place ECS/EKS/Fargate in a public subnet. Only ALB and NAT Gateway belong in public subnets.
 8. compute.subnets for EC2/Lambda can be a single subnet.
 9. database.subnets must always list PRIVATE subnet names only.
 10. Always include nat_gateway in networking when private subnets need internet access.
@@ -51,13 +52,16 @@ Security Group rules:
 Service placement rules:
 15. Always include database section when the workload clearly needs persistent data storage (e.g. ERP, web app, backend server).
 16. DynamoDB must ALWAYS be placed in the database section, NEVER in storage. storage only allows S3 or EFS.
-17. Use api_gateway ONLY when Lambda handles HTTP/REST requests from external clients. Do NOT add api_gateway for event-driven Lambda.
+17. Use api_gateway ONLY when Lambda handles HTTP/REST requests from external clients.
+    Do NOT add api_gateway when compute includes ECS, EKS, EC2, or Fargate with a load_balancer.
+    For ECS/EKS + ALB architectures, traffic flows CloudFront → ALB directly. No API Gateway needed.
 18. Use streaming for real-time data pipelines (Kinesis), messaging for async tasks (SQS/SNS).
 19. Always set multi_az: true for database when high availability is required.
 20. Always choose cost-efficient instance types unless the user specifies otherwise.
 
 Frontend/Static file optimization rules:
-21. When the user mentions React, Vue, Angular, or any SPA frontend framework:
+21. When the user mentions React, Vue, Angular, Next.js, or any SPA/frontend framework:
+    - You MUST include BOTH storage (S3) AND cdn (CloudFront) in the output. This is mandatory.
     - ALWAYS serve frontend static files via S3 (storage) + CloudFront (cdn), NOT via ECS/EC2/compute.
     - ECS/EC2 compute resources should handle ONLY the backend API server.
     - Example: "React frontend + Node.js backend on ECS"
@@ -65,18 +69,41 @@ Frontend/Static file optimization rules:
       → cdn: [{name: "CloudFront", origin: "FrontendBucket"}]
       → compute: [{name: "NodejsBackend", type: "ECS", subnets: ["PrivateSubnet1", "PrivateSubnet2"]}]
     - VPC is still required for the ECS backend in this case.
+    - NEVER omit S3 when React/Vue/Angular is mentioned. S3 is the mandatory origin for CloudFront.
 22. Only use compute for server-side rendered apps (e.g. Next.js SSR) if rendering must happen server-side.
 
 
+Async processing rules:
+26. When the user mentions tasks that take a long time (e.g. AI processing, video encoding, batch jobs, background tasks):
+    - ALWAYS use SQS (messaging) as a queue between the web server and the worker.
+    - ALWAYS add a Lambda function (compute, type: Lambda, subnets: null) as the async worker.
+    - NEVER generate SQS without a corresponding Lambda worker.
+    - Flow: ECS (web, private subnet) → SQS → Lambda (no VPC) → storage/database
+27. When the user mentions "notification", "push alert", "알림", or "notify when done":
+    - ALWAYS add SNS (messaging) to send the completion notification.
+    - Flow: Lambda/Worker → SNS → User
+
+Security and encryption rules:
+28. When the user mentions "encrypt", "암호화", or "secure storage of sensitive data":
+    - ALWAYS add KMS to the security section (kms: true).
+    - KMS is used to encrypt data stored in DynamoDB, S3, or RDS.
+29. When the user mentions "login", "회원", "auth", or "user account":
+    - ALWAYS add Cognito to the auth section.
+
+Global service rules:
+30. When the user mentions "global", "worldwide", "전 세계", or multiple regions/countries:
+    - ALWAYS include cdn (CloudFront) and dns (Route 53) for global content delivery.
+    - Set DynamoDB multi_az: true or mention Global Table in the architecture.
+
 Data flow design rules (for clean diagram readability):
-23. Always design with a clear top-to-bottom data flow:
+31. Always design with a clear top-to-bottom data flow:
     - Entry point at top: User → DNS/CDN/ALB
     - Processing in middle: ECS/Lambda
     - Storage at bottom: RDS/DynamoDB/S3
-24. Include ONLY the components that are in the actual data path. Do not add services
+32. Include ONLY the components that are in the actual data path. Do not add services
     unless the user explicitly needs them (e.g. do NOT add Cognito unless auth is required,
     do NOT add ECR unless container registry is mentioned).
-25. Keep architectures minimal and focused. Fewer components = cleaner diagram.
+33. Keep architectures minimal and focused. Fewer components = cleaner diagram.
     Only add monitoring (CloudWatch), security (WAF, GuardDuty), or messaging (SQS)
     when the user explicitly requests those features.
 

@@ -128,6 +128,7 @@ class Security(BaseModel):
     waf: bool = False
     shield: bool = False
     guard_duty: bool = False
+    kms: bool = False
 
 
 class CloudWatchAlarm(BaseModel):

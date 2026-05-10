@@ -57,12 +57,13 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
     resources: dict = {}
     links: list = []
     # 리소스를 데이터 흐름 순서대로 담을 버킷
-    cloud_streaming: list = []   # Kinesis 등 진입점
-    cloud_compute:   list = []   # Lambda 등 처리
-    cloud_db:        list = []   # DynamoDB 등 출력 DB
-    cloud_storage:   list = []   # S3 등 출력 Storage
-    cloud_entry:     list = []   # CloudFront, Route53 등 사용자 진입점 (VPC 위에 배치)
-    cloud_support:   list = []   # ECR, Cognito 등 지원 서비스 (VPC 아래에 배치)
+    cloud_streaming:     list = []   # Kinesis, SQS 등 입력 큐
+    cloud_compute:       list = []   # Lambda 등 처리
+    cloud_notification:  list = []   # SNS 등 완료 알림 (Lambda 처리 후)
+    cloud_db:            list = []   # DynamoDB 등 출력 DB
+    cloud_storage:       list = []   # S3 등 출력 Storage
+    cloud_entry:         list = []   # CloudFront, Route53 등 사용자 진입점 (VPC 위에 배치)
+    cloud_support:       list = []   # ECR, Cognito, KMS 등 지원 서비스 (VPC 아래에 배치)
 
     # 서브넷별 자식 리소스 추적 (name → [resource_id, ...])
     subnet_children: dict = {
@@ -71,6 +72,10 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
     subnet_type_map: dict = {
         s["name"]: s["type"] for s in arch.get("vpc", {}).get("subnets", [])
     }
+
+    # ── 아키텍처 타입 사전 판별 (하위 섹션에서 공통 사용) ────────────────────
+    has_cdn_local = bool(arch.get("cdn"))
+    is_cdn_vpc    = has_cdn_local and bool(arch.get("vpc"))
 
     # ── 서버리스 아키텍처 자동 감지 ──────────────────────────────────────────
     # ECS/EKS/EC2/Fargate 없이 Lambda만 있고, Kinesis/SQS/DynamoDB/S3 등 managed 서비스만 사용하면
@@ -101,7 +106,8 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
     for item in arch.get("compute", []):
         rid = item["name"]
         compute_names.append(rid)
-        resources[rid] = {"Type": COMPUTE_TYPE_MAP.get(item["type"], "AWS::EC2::Instance")}
+        comp_type = item.get("type", "ECS")
+        resources[rid] = {"Type": COMPUTE_TYPE_MAP.get(comp_type, "AWS::EC2::Instance")}
 
         subnets = item.get("subnets") or []
 
@@ -112,16 +118,44 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
                 "Type": "AWS::AutoScaling::AutoScalingGroup",
                 "Children": [rid],
             }
-            if subnets and subnets[0] in subnet_children:
-                subnet_children[subnets[0]].append(asg_rid)
+            # ECS/EKS/Fargate는 반드시 Private Subnet에 배치 (LLM이 Public Subnet 지정해도 강제 이동)
+            effective_subnets = subnets
+            if comp_type in {"ECS", "EKS", "Fargate"} and subnets and subnet_type_map.get(subnets[0]) == "public":
+                private_sn = next((n for n, t in subnet_type_map.items() if t == "private"), None)
+                if private_sn:
+                    effective_subnets = [private_sn] + subnets[1:]
+            if effective_subnets and effective_subnets[0] in subnet_children:
+                subnet_children[effective_subnets[0]].append(asg_rid)
             else:
                 cloud_compute.append(asg_rid)
+            # Multi-AZ: 두 번째 서브넷에 ASG 복제
+            if len(subnets) >= 2 and subnets[1] in subnet_children:
+                replica_rid = f"{rid}Replica"
+                asg_replica_rid = f"{rid}ReplicaASG"
+                resources[replica_rid] = resources[rid].copy()
+                resources[asg_replica_rid] = {
+                    "Type": "AWS::AutoScaling::AutoScalingGroup",
+                    "Children": [replica_rid],
+                }
+                subnet_children[subnets[1]].append(asg_replica_rid)
+                compute_names.append(replica_rid)
         else:
-            if subnets and subnets[0] in subnet_children:
-                # VPC 안 서브넷에 배치
-                subnet_children[subnets[0]].append(rid)
+            # ECS/EKS/Fargate는 반드시 Private Subnet에 배치
+            effective_subnets = subnets
+            if comp_type in {"ECS", "EKS", "Fargate"} and subnets and subnet_type_map.get(subnets[0]) == "public":
+                private_sn = next((n for n, t in subnet_type_map.items() if t == "private"), None)
+                if private_sn:
+                    effective_subnets = [private_sn] + subnets[1:]
+            if effective_subnets and effective_subnets[0] in subnet_children:
+                subnet_children[effective_subnets[0]].append(rid)
             else:
                 cloud_compute.append(rid)
+            # Multi-AZ: 두 번째 서브넷에 컴퓨팅 복제
+            if len(effective_subnets) >= 2 and effective_subnets[1] in subnet_children:
+                replica_rid = f"{rid}Replica"
+                resources[replica_rid] = resources[rid].copy()
+                subnet_children[effective_subnets[1]].append(replica_rid)
+                compute_names.append(replica_rid)
 
     # ── 2. Load Balancer ────────────────────────────────────────────────────
     lb_names: list[str] = []
@@ -146,10 +180,14 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
         resources[rid] = {"Type": DATABASE_TYPE_MAP.get(item["type"], "AWS::RDS::DBInstance")}
         subnets = item.get("subnets") or []
         if subnets and subnets[0] in subnet_children:
-            # VPC 안 프라이빗 서브넷에 배치
             subnet_children[subnets[0]].append(rid)
         else:
             cloud_db.append(rid)
+        # Multi-AZ: 두 번째 서브넷에 DB Standby 복제
+        if len(subnets) >= 2 and subnets[1] in subnet_children:
+            replica_rid = f"{rid}Standby"
+            resources[replica_rid] = resources[rid].copy()
+            subnet_children[subnets[1]].append(replica_rid)
 
     # ── 4. Cache ────────────────────────────────────────────────────────────
     for item in arch.get("cache", []):
@@ -242,7 +280,9 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
             "Align": "center",
             "Children": vpc_children,
         }
-        if igw_exists:
+        # CDN이 있으면 IGW를 BorderChild로 두지 않음
+        # (CloudFront → ALB 수직선이 VPC 전체를 관통하는 시각적 혼란 방지)
+        if igw_exists and not has_cdn_local:
             resources["InternetGateway"] = {"Type": "AWS::EC2::InternetGateway"}
             vpc_res["BorderChildren"] = [{"Position": "S", "Resource": "InternetGateway"}]
 
@@ -254,24 +294,41 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
         rid = item["name"]
         storage_names.append(rid)
         resources[rid] = {"Type": STORAGE_TYPE_MAP.get(item["type"], "AWS::S3::Bucket")}
-        cloud_storage.append(rid)
+        if not is_cdn_vpc:
+            # CDN + VPC 아키텍처가 아닐 때만 cloud_storage에 추가
+            # (CDN + VPC일 때는 S3를 cloud_entry에 배치하므로 cloud_storage에서 제외)
+            cloud_storage.append(rid)
+
+    # DNS(Route53)를 CloudFront보다 먼저 배치 (실제 통신 순서: Route53 → CloudFront)
+    for item in arch.get("dns", []):
+        rid = "Route53"
+        resources[rid] = {"Type": "AWS::Route53::HostedZone"}
+        cloud_entry.append(rid)   # 사용자 진입점 → VPC 위
 
     cdn_names: list[str] = []
     for item in arch.get("cdn", []):
         rid = "CloudFront"
         cdn_names.append(rid)
         resources[rid] = {"Type": "AWS::CloudFront::Distribution"}
-        cloud_entry.append(rid)   # 사용자 진입점 → VPC 위
+        cloud_entry.append(rid)   # Route53 다음에 배치
 
-    for item in arch.get("dns", []):
-        rid = "Route53"
-        resources[rid] = {"Type": "AWS::Route53::HostedZone"}
-        cloud_entry.append(rid)   # 사용자 진입점 → VPC 위
+    # CDN + VPC 아키텍처: S3를 cloud_entry에 포함 (CloudFront의 오리진 → VPC 위에 배치)
+    if arch.get("cdn") and arch.get("vpc"):
+        for item in arch.get("storage", []):
+            rid = item["name"]
+            if rid not in resources:  # 아직 추가 안 된 경우만
+                resources[rid] = {"Type": STORAGE_TYPE_MAP.get(item["type"], "AWS::S3::Bucket")}
+            cloud_entry.append(rid)
 
     for item in arch.get("messaging", []):
         rid = item["name"]
         resources[rid] = {"Type": MESSAGING_TYPE_MAP.get(item["type"], "AWS::SQS::Queue")}
-        cloud_streaming.append(rid)
+        # SNS는 Lambda 처리 후 알림이므로 cloud_notification에 배치
+        # SQS/EventBridge는 입력 큐이므로 cloud_streaming에 배치
+        if item.get("type") == "SNS":
+            cloud_notification.append(rid)
+        else:
+            cloud_streaming.append(rid)
 
     for item in arch.get("streaming", []):
         rid = item["name"]
@@ -288,28 +345,43 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
         resources[rid] = {"Type": "AWS::SecretsManager::Secret"}
         cloud_support.append(rid)
 
+    # KMS 렌더링 (security.kms: true 일 때)
+    kms_exists = arch.get("security", {}).get("kms", False)
+    if kms_exists:
+        resources["KMS"] = {"Type": "AWS::KMS::Key"}
+        cloud_support.append("KMS")
+
     # ── 9b. aws_cloud_children 순서 조립 ────────────────────────────────────
     # 데이터 흐름 순서:
     #   VPC + CDN: 진입점(CloudFront/Route53) → VPC → 지원서비스(ECR 등)
     #   VPC only:  VPC → 지원서비스
-    #   Serverless: Streaming → Compute → DB/Storage
+    #   Serverless: Streaming → Compute → Notification → DB/Storage
     aws_cloud_children: list = []
-    has_cdn_local = bool(cdn_names)
 
     if has_vpc:
-        # VPC 아키텍처: VPC 먼저, 지원 서비스(ECR 등) 뒤, CDN/Route53은 맨 뒤
+        # VPC 아키텍처: 진입점 → VPC → SQS(큐) → Lambda(처리) → SNS(알림) → 지원 서비스
+        aws_cloud_children.extend(cloud_entry)          # CloudFront, Route53 등 (VPC 위)
         aws_cloud_children.append("VPC")
-        aws_cloud_children.extend(cloud_support)  # ECR, Cognito 등
-        aws_cloud_children.extend(cloud_entry)    # CloudFront, Route53 등
+        aws_cloud_children.extend(cloud_streaming)      # SQS 등 입력 큐
+        aws_cloud_children.extend(cloud_compute)        # Lambda 등 처리
+        aws_cloud_children.extend(cloud_notification)   # SNS 등 완료 알림
+        aws_cloud_children.extend(cloud_support)        # ECR, KMS, Cognito 등
     else:
         # Serverless: 진입점 → Streaming → Compute (DB/Storage는 섹션 10에서 OutputStack으로 추가)
         aws_cloud_children.extend(cloud_entry)
         aws_cloud_children.extend(cloud_streaming)
         aws_cloud_children.extend(cloud_compute)
+        aws_cloud_children.extend(cloud_notification)
         aws_cloud_children.extend(cloud_support)
 
     # ── 10. 레이아웃: 출력 리소스 HorizontalStack ───────────────────────────
-    output_resources = cloud_db + cloud_storage
+    # CDN이 있는 VPC 아키텍처에서는 S3가 CloudFront의 오리진이므로 cloud_entry와 함께 배치
+    # (S3는 OutputStack 대신 AWSCloud 상단에 CloudFront 옆에 위치)
+    if has_vpc and has_cdn_local:
+        output_resources = cloud_db  # S3는 제외 (이미 cloud_entry 영역에서 CloudFront와 연결됨)
+    else:
+        output_resources = cloud_db + cloud_storage
+
     if len(output_resources) > 1:
         resources["OutputStack"] = {
             "Type": "AWS::Diagram::HorizontalStack",
@@ -319,10 +391,15 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
     else:
         aws_cloud_children.extend(output_resources)
 
+
     # ── 11. Links (SourcePosition/TargetPosition으로 화살표 정렬) ────────────
     arrow = {"Type": "Open"}
     has_cdn = has_cdn_local
-    streaming_names = [item["name"] for item in arch.get("streaming", [])]
+    streaming_names  = [item["name"] for item in arch.get("streaming", [])]
+    original_compute = [c["name"] for c in arch.get("compute", [])]
+    sqs_names        = [item["name"] for item in arch.get("messaging", []) if item.get("type") == "SQS"]
+    sns_names        = [item["name"] for item in arch.get("messaging", []) if item.get("type") == "SNS"]
+    ecr_names        = [item["name"] for item in arch.get("container_registry", [])]
     resources["User"] = {"Type": "AWS::Diagram::Resource", "Preset": "User"}
 
     if has_cdn:
@@ -331,17 +408,21 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
             links.append({"Source": "User", "SourcePosition": "S",
                           "Target": cdn, "TargetPosition": "N",
                           "TargetArrowHead": arrow})
-
-    if lb_names and igw_exists:
-        # API 트래픽: User → IGW → ALB (실제 네트워크 흐름)
+        if lb_names:
+            # API 트래픽: CloudFront → ALB (CDN이 있을 때는 CloudFront를 통해 ALB로)
+            links.append({"Source": cdn_names[0], "SourcePosition": "S",
+                          "Target": lb_names[0], "TargetPosition": "N",
+                          "TargetArrowHead": arrow})
+    elif lb_names and igw_exists:
+        # CDN 없이 IGW만 있는 경우: User → IGW → ALB
         links.append({"Source": "User", "SourcePosition": "S",
                       "Target": "InternetGateway", "TargetPosition": "N",
                       "TargetArrowHead": arrow})
-        links.append({"Source": "InternetGateway", "SourcePosition": "N",
-                      "Target": lb_names[0], "TargetPosition": "S",
+        links.append({"Source": "InternetGateway", "SourcePosition": "S",
+                      "Target": lb_names[0], "TargetPosition": "N",
                       "TargetArrowHead": arrow})
     elif lb_names:
-        # IGW 없는 경우 User → ALB 직접
+        # IGW도 CDN도 없는 경우: User → ALB 직접
         links.append({"Source": "User", "SourcePosition": "S",
                       "Target": lb_names[0], "TargetPosition": "N",
                       "TargetArrowHead": arrow})
@@ -351,32 +432,44 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
                       "Target": streaming_names[0], "TargetPosition": "N",
                       "TargetArrowHead": arrow})
 
-    # LB → Compute
+    # LB → Compute (원본만 연결 - Replica는 서브넷 배치로 Multi-AZ 표현)
     for lb in lb_names:
-        for comp in compute_names:
+        for comp in original_compute:
             target = f"{comp}ASG" if comp in auto_scaling_map else comp
             links.append({"Source": lb, "SourcePosition": "S",
                           "Target": target, "TargetPosition": "N",
                           "TargetArrowHead": arrow})
 
-    # Streaming → Compute (Kinesis → Lambda)
-    for s_name in streaming_names:
-        for comp in compute_names:
-            links.append({"Source": s_name, "SourcePosition": "S",
-                          "Target": comp, "TargetPosition": "N",
-                          "TargetArrowHead": arrow})
+    # Streaming → Compute (Kinesis/SQS → Lambda)
+    for s_name in streaming_names + sqs_names:
+        for comp in original_compute:
+            comp_type = next(
+                (c.get("type") for c in arch.get("compute", []) if c["name"] == comp), ""
+            )
+            # Lambda 워커만 연결 (ECS 웹서버는 제외)
+            if comp_type == "Lambda":
+                links.append({"Source": s_name, "SourcePosition": "S",
+                              "Target": comp, "TargetPosition": "N",
+                              "TargetArrowHead": arrow})
 
-    # Compute → DB
-    for i, comp in enumerate(compute_names):
+    # Compute → DB (원본만 연결 - Replica 제외)
+    for i, comp in enumerate(original_compute):
+        comp_type = next(
+            (c.get("type") for c in arch.get("compute", []) if c["name"] == comp), ""
+        )
+        # SQS가 있는 비동기 아키텍처에서 ECS는 SQS로만 연결, DB 직접 연결 제외
+        # Lambda가 DB에 저장하는 역할을 하므로 ECS→DB 화살표 불필요
+        if sqs_names and comp_type in {"ECS", "EKS", "Fargate"}:
+            continue
         for j, db in enumerate(db_names):
             pos = "SW" if j == 0 else "SE"
             links.append({"Source": comp, "SourcePosition": pos,
                           "Target": db, "TargetPosition": "N",
                           "TargetArrowHead": arrow})
 
-    # Compute → Storage (CDN 없을 때만 - 프론트엔드 버킷 아닐 때)
+    # Compute → Storage (CDN 없을 때만 - 원본만 연결)
     if not has_cdn:
-        for comp in compute_names:
+        for comp in original_compute:
             for j, st in enumerate(storage_names):
                 pos = "SE" if j == 0 else "S"
                 links.append({"Source": comp, "SourcePosition": pos,
@@ -396,6 +489,57 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
             links.append({"Source": cdn, "SourcePosition": "S",
                           "Target": st, "TargetPosition": "N",
                           "TargetArrowHead": arrow})
+
+    # ECS → SQS (비동기 작업 큐잉)
+    for comp in original_compute:
+        comp_type = next(
+            (c.get("type") for c in arch.get("compute", []) if c["name"] == comp), ""
+        )
+        if comp_type in {"ECS", "EKS", "Fargate"} and sqs_names:
+            links.append({"Source": comp, "SourcePosition": "S",
+                          "Target": sqs_names[0], "TargetPosition": "N",
+                          "TargetArrowHead": arrow})
+
+    # ECS → ECR (컨테이너 이미지 Pull) — 원본 컴퓨팅만 (Replica 제외)
+    for comp in original_compute:
+        comp_type = next(
+            (c.get("type") for c in arch.get("compute", []) if c["name"] == comp), ""
+        )
+        if comp_type in {"ECS", "EKS", "Fargate"} and ecr_names:
+            links.append({"Source": comp, "SourcePosition": "E",
+                          "Target": ecr_names[0], "TargetPosition": "W",
+                          "TargetArrowHead": {"Type": "Open"}})
+
+    # Lambda → SNS (작업 완료 알림)
+    for comp in original_compute:
+        comp_type = next(
+            (c.get("type") for c in arch.get("compute", []) if c["name"] == comp), ""
+        )
+        if comp_type == "Lambda" and sns_names:
+            links.append({"Source": comp, "SourcePosition": "S",
+                          "Target": sns_names[0], "TargetPosition": "N",
+                          "TargetArrowHead": arrow})
+
+    # Lambda → KMS (암호화 키 사용)
+    if kms_exists:
+        for comp in original_compute:
+            comp_type = next(
+                (c.get("type") for c in arch.get("compute", []) if c["name"] == comp), ""
+            )
+            if comp_type == "Lambda":
+                links.append({"Source": comp, "SourcePosition": "E",
+                              "Target": "KMS", "TargetPosition": "W",
+                              "TargetArrowHead": arrow})
+
+    # ECS → NAT Gateway (프라이빗 서브넷 아웃바운드 트래픽)
+    for comp in original_compute:
+        comp_type = next(
+            (c.get("type") for c in arch.get("compute", []) if c["name"] == comp), ""
+        )
+        if comp_type in {"ECS", "EKS", "Fargate", "EC2"} and nat_names:
+            links.append({"Source": comp, "SourcePosition": "N",
+                          "Target": nat_names[0], "TargetPosition": "S",
+                          "TargetArrowHead": {"Type": "Open"}})
 
     # Compute → NAT Gateway 화살표는 생략
     # (NAT Gateway가 Public Subnet에 있는 것 자체가 프라이빗→인터넷 경로를 의미,
