@@ -16,7 +16,7 @@ from ai_engine.rag.knowledge_base import (
     _get_bm25_retriever,
     rerank_documents,
 )
-from langchain_classic.retrievers import EnsembleRetriever
+from langchain.retrievers import EnsembleRetriever
 from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
 

@@ -1,4 +1,4 @@
-"""진입점: 설계 에이전트 실행 (사용자 자연어 입력 모드)."""
+"""진입점: 설계 + 개발 에이전트 실행 (사용자 자연어 입력 모드)."""
 
 import sys
 import io
@@ -12,12 +12,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from ai_engine.graph import run_design_agent
+from ai_engine.graph import run_pipeline
 
 
 def main() -> None:
     print("=" * 55)
-    print("   Cloud Infrastructure Design Agent")
+    print("   Cloud Infrastructure Design & IaC Agent")
     print("=" * 55)
     print("AWS 클라우드 인프라 요구사항을 자연어로 입력하세요.")
     print("(종료: 'exit' 또는 'quit' 입력)\n")
@@ -37,15 +37,23 @@ def main() -> None:
             break
 
         print(f"\n[입력] {user_input}\n")
-        print("설계 중...\n")
+        print("설계 및 코드 생성 중...\n")
 
         try:
-            result = run_design_agent(user_input)
+            result = run_pipeline(user_input)
 
-            print("\n[출력] 생성된 YAML 아키텍처 명세:")
+            print("\n[1단계] 생성된 YAML 아키텍처 명세:")
             print("-" * 55)
             print(result["yaml_output"])
             print("-" * 55)
+
+            print("\n[2단계] 생성된 Terraform 파일:")
+            for filename, content in result["terraform_files"].items():
+                print(f"\n{'=' * 55}")
+                print(f"  {filename}")
+                print("=" * 55)
+                print(content)
+
             print("\n다음 요구사항을 입력하거나 'exit'으로 종료하세요.\n")
 
         except Exception as e:

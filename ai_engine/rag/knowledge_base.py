@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """AWS Well-Architected Framework PDF 문서를 ChromaDB에 인덱싱하고 검색하는 모듈.
 
 개선 사항:
@@ -8,8 +10,9 @@
 """
 
 import re
+
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.retrievers import BM25Retriever
@@ -18,7 +21,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
-from langchain_classic.retrievers import EnsembleRetriever
+from langchain.retrievers import EnsembleRetriever
 from pydantic import BaseModel, Field
 
 AI_ENGINE_DIR = Path(__file__).parent.parent

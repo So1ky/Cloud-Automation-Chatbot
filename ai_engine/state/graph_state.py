@@ -4,7 +4,7 @@ from typing_extensions import TypedDict
 
 
 class GraphState(TypedDict):
-    """설계 에이전트 LangGraph 공유 상태."""
+    """설계·개발 에이전트 LangGraph 공유 상태."""
 
     # 사용자 자연어 요구사항
     user_requirements: str
@@ -14,6 +14,10 @@ class GraphState(TypedDict):
 
     # 설계 에이전트가 생성한 YAML 아키텍처 명세
     yaml_output: str
+
+    # 개발 에이전트가 생성한 Terraform 파일 (파일명 → HCL 내용)
+    # 예: {"main.tf": "...", "variables.tf": "...", "outputs.tf": "...", "providers.tf": "..."}
+    terraform_files: dict
 
     # 에이전트 간 메시지 히스토리 (LangGraph 내장 reducer)
     messages: Annotated[list, add_messages]
