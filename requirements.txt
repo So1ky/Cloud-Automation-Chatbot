@@ -2,34 +2,33 @@
 # 설치: pip install -r requirements.txt
 
 # LangChain / LangGraph
-langchain==1.2.15
-langchain-chroma==1.1.0
-langchain-classic==1.0.4
-langchain-community==0.4.1
-langchain-core==1.3.2
-langchain-openai==1.2.1
-langchain-text-splitters==1.1.2
-langgraph==1.1.9
-langsmith==0.7.36
+langchain
+langchain-chroma
+langchain-community
+langchain-core
+langchain-openai
+langchain-text-splitters
+langgraph
+langsmith
 
 # OpenAI
-openai==2.32.0
-tiktoken==0.12.0
+openai
+tiktoken
 
 # Vector DB
-chromadb==1.5.8
+chromadb
 
 # RAG
-rank-bm25==0.2.2
-sentence-transformers==5.4.1
-pypdf==6.10.2
+rank-bm25
+sentence-transformers
+pypdf
 
 # API Server
-fastapi==0.136.1
-uvicorn==0.46.0
+fastapi
+uvicorn
 
 # Utils
-pydantic==2.13.3
-python-dotenv==1.2.2
-PyYAML==6.0.3
-httpx==0.28.1
+pydantic
+python-dotenv
+PyYAML
+httpx
