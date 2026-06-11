@@ -1,5 +1,8 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import Sidebar from "@/components/Sidebar";
+import ChatArea from "@/components/ChatArea";
+import AuthModal from "@/components/AuthModal";
 
 interface Message {
   id: string;
@@ -37,15 +40,36 @@ export default function Home() {
   const [healthStatus, setHealthStatus] = useState<"ok" | "error" | "loading">(
     "loading",
   );
-  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  // Auth States
+  const [currentUser, setCurrentUser] = useState<{ id: number; email: string } | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+
+  const fetchUserInfo = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/api/user/me", {
+        credentials: "include",
+      });
+      if (response.ok) {
+        const user = await response.json();
+        setCurrentUser(user);
+        loadChatHistory();
+      } else {
+        setCurrentUser(null);
+        setChatHistory([]);
+      }
+    } catch (error) {
+      console.error("Failed to fetch user info:", error);
+      setCurrentUser(null);
+      setChatHistory([]);
+    }
   };
 
   const loadChatHistory = async () => {
     try {
-      const response = await fetch("http://localhost:8000/api/chat/history");
+      const response = await fetch("http://localhost:8000/api/chat/history", {
+        credentials: "include",
+      });
       if (!response.ok) throw new Error("채팅 목록 조회 실패");
 
       const history: ChatHistoryItem[] = await response.json();
@@ -59,7 +83,9 @@ export default function Home() {
     setIsHistoryLoading(true);
 
     try {
-      const response = await fetch(`http://localhost:8000/api/chat/${chatId}`);
+      const response = await fetch(`http://localhost:8000/api/chat/${chatId}`, {
+        credentials: "include",
+      });
       if (!response.ok) throw new Error("채팅 상세 조회 실패");
 
       const chat: ChatHistoryDetail = await response.json();
@@ -95,16 +121,14 @@ export default function Home() {
   };
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  useEffect(() => {
+    // Check Health
     fetch("http://localhost:8000/api/health")
       .then((res) => res.json())
       .then(() => setHealthStatus("ok"))
       .catch(() => setHealthStatus("error"));
 
-    loadChatHistory();
+    // Check Auth Token
+    fetchUserInfo();
   }, []);
 
   const handleSend = async () => {
@@ -125,8 +149,11 @@ export default function Home() {
     try {
       const response = await fetch("http://localhost:8000/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ requirements: userMessage.text }),
+        credentials: "include",
       });
 
       if (!response.ok) throw new Error("서버 응답 오류");
@@ -142,7 +169,10 @@ export default function Home() {
 
       setMessages([userMessage, botMessage]);
       setSelectedChatId(data.chat_id);
-      await loadChatHistory();
+      
+      if (currentUser) {
+        await loadChatHistory();
+      }
     } catch (error) {
       console.error("Error:", error);
       const errorMessage: Message = {
@@ -157,162 +187,58 @@ export default function Home() {
     }
   };
 
+  const handleLoginSuccess = (emailStr: string) => {
+    setCurrentUser({ id: 0, email: emailStr });
+    fetchUserInfo();
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch("http://localhost:8000/api/user/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (error) {
+      console.error("Failed to logout on backend:", error);
+    }
+    setCurrentUser(null);
+    setChatHistory([]);
+    startNewChat();
+  };
+
   return (
-    <main className="flex h-screen bg-gray-100">
-      <aside className="hidden w-72 shrink-0 border-r bg-white md:flex md:flex-col">
-        <div className="border-b p-4">
-          <button
-            onClick={startNewChat}
-            className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-          >
-            새 채팅
-          </button>
-        </div>
+    <main className="flex h-screen bg-slate-50 font-sans text-slate-800">
+      {/* Sidebar Component */}
+      <Sidebar
+        currentUser={currentUser}
+        chatHistory={chatHistory}
+        selectedChatId={selectedChatId}
+        onSelectChat={loadChatDetail}
+        onStartNewChat={startNewChat}
+        onLogout={handleLogout}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
+      />
 
-        <div className="flex-1 overflow-y-auto p-3">
-          {chatHistory.length === 0 ? (
-            <p className="px-2 py-3 text-sm text-gray-500">
-              저장된 채팅이 없습니다.
-            </p>
-          ) : (
-            <div className="space-y-1">
-              {chatHistory.map((chat) => (
-                <button
-                  key={chat.id}
-                  onClick={() => loadChatDetail(chat.id)}
-                  className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${
-                    selectedChatId === chat.id
-                      ? "bg-blue-50 text-blue-700"
-                      : "text-gray-700 hover:bg-gray-100"
-                  }`}
-                >
-                  <span className="block truncate text-sm font-medium">
-                    {chat.requirements}
-                  </span>
-                  <span className="mt-1 block text-xs text-gray-500">
-                    {new Date(chat.created_at).toLocaleString([], {
-                      month: "2-digit",
-                      day: "2-digit",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </aside>
+      {/* Main Chat Workspace Component */}
+      <ChatArea
+        messages={messages}
+        isLoading={isLoading}
+        isHistoryLoading={isHistoryLoading}
+        healthStatus={healthStatus}
+        inputValue={inputValue}
+        setInputValue={setInputValue}
+        onSend={handleSend}
+        onStartNewChat={startNewChat}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
+        currentUser={currentUser}
+      />
 
-      <section className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b bg-white px-6 py-4 shadow-sm">
-          <h1 className="text-xl font-bold text-blue-600">Cloud Diagram Bot</h1>
-          <div className="flex items-center gap-2">
-            <span
-              className={`h-3 w-3 rounded-full ${
-                healthStatus === "ok" ? "bg-green-500" : "bg-red-500"
-              }`}
-            ></span>
-            <span className="text-sm text-gray-600">
-              {healthStatus === "ok"
-                ? "Backend Connected"
-                : "Backend Disconnected"}
-            </span>
-          </div>
-        </header>
-
-        <div className="flex-1 overflow-y-auto p-4">
-          <div className="mx-auto max-w-4xl space-y-6">
-            {isHistoryLoading ? (
-              <div className="text-center text-sm text-gray-500">
-                채팅을 불러오는 중입니다.
-              </div>
-            ) : (
-              messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex ${
-                    msg.role === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  <div
-                    className={`max-w-[80%] rounded-2xl p-4 ${
-                      msg.role === "user"
-                        ? "rounded-tr-none bg-blue-600 text-white"
-                        : "rounded-tl-none border bg-white text-gray-800 shadow-sm"
-                    }`}
-                  >
-                    <p className="whitespace-pre-wrap">{msg.text}</p>
-                    {msg.imageUrl && (
-                      <div className="mt-4 overflow-hidden rounded-lg border bg-gray-50">
-                        <img
-                          src={msg.imageUrl}
-                          alt="Generated Diagram"
-                          className="h-auto max-h-[500px] w-full object-contain"
-                        />
-                        <div className="border-t bg-white p-2 text-center text-xs text-gray-500">
-                          <a
-                            href={msg.imageUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="hover:underline"
-                          >
-                            이미지 크게 보기
-                          </a>
-                        </div>
-                      </div>
-                    )}
-                    <span
-                      className={`mt-1 block text-[10px] opacity-70 ${
-                        msg.role === "user" ? "text-right" : "text-left"
-                      }`}
-                    >
-                      {msg.timestamp.toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-
-            {isLoading && (
-              <div className="flex justify-start">
-                <div className="rounded-2xl rounded-tl-none border bg-white p-4 shadow-sm">
-                  <div className="flex gap-1">
-                    <div className="h-2 w-2 animate-bounce rounded-full bg-gray-400"></div>
-                    <div className="h-2 w-2 animate-bounce rounded-full bg-gray-400 [animation-delay:-.3s]"></div>
-                    <div className="h-2 w-2 animate-bounce rounded-full bg-gray-400 [animation-delay:-.5s]"></div>
-                  </div>
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-        </div>
-
-        <div className="border-t bg-white p-4">
-          <div className="mx-auto flex max-w-4xl gap-3">
-            <input
-              type="text"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSend()}
-              placeholder="메시지를 입력하세요..."
-              className="flex-1 rounded-xl border px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              disabled={isLoading}
-            />
-            <button
-              onClick={handleSend}
-              disabled={isLoading || !inputValue.trim()}
-              className="rounded-xl bg-blue-600 px-6 py-2 font-medium text-white transition-colors hover:bg-blue-700 disabled:bg-gray-400"
-            >
-              전송
-            </button>
-          </div>
-        </div>
-      </section>
+      {/* Glassmorphic Auth Modal Component */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onLoginSuccess={handleLoginSuccess}
+      />
     </main>
   );
 }
