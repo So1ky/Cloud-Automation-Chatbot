@@ -9,6 +9,7 @@ interface Message {
   role: "user" | "bot";
   text: string;
   imageUrl?: string;
+  terraformCode?: Record<string, string>;
   timestamp: Date;
 }
 
@@ -21,6 +22,7 @@ interface ChatHistoryItem {
 interface ChatHistoryDetail extends ChatHistoryItem {
   response_message: string;
   image_url?: string | null;
+  terraform_code?: Record<string, string> | null;
 }
 
 const initialMessage = (): Message => ({
@@ -42,7 +44,10 @@ export default function Home() {
   );
 
   // Auth States
-  const [currentUser, setCurrentUser] = useState<{ id: number; email: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{
+    id: number;
+    email: string;
+  } | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   const fetchUserInfo = async () => {
@@ -104,6 +109,7 @@ export default function Home() {
           role: "bot",
           text: chat.response_message,
           imageUrl: chat.image_url || undefined,
+          terraformCode: chat.terraform_code || undefined,
           timestamp,
         },
       ]);
@@ -164,12 +170,13 @@ export default function Home() {
         role: "bot",
         text: data.message || "생성이 완료되었습니다.",
         imageUrl: data.image_url,
+        terraformCode: data.terraform_code || undefined,
         timestamp: new Date(),
       };
 
       setMessages([userMessage, botMessage]);
       setSelectedChatId(data.chat_id);
-      
+
       if (currentUser) {
         await loadChatHistory();
       }
