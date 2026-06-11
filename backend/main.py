@@ -7,6 +7,8 @@ import logging
 import os
 
 from backend.router import chat_router
+from backend.database.config import Base, engine
+from backend.database import models
 from ai_engine.rag.knowledge_base import load_knowledge_base
 
 load_dotenv()
@@ -19,6 +21,8 @@ logger = logging.getLogger(__name__)
 # ─── 시작 시 ChromaDB 미리 로드 (첫 요청 지연 방지) ─────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+
     try:
         logger.info("ChromaDB warming up...")
         load_knowledge_base()
