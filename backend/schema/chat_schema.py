@@ -11,6 +11,7 @@ class ChatResponse(BaseModel):
     chat_id: int
     image_url: str
     message: str
+    terraform_code: Optional[dict] = None
 
 
 class ChatHistoryItemResponse(BaseModel):
@@ -27,6 +28,7 @@ class ChatHistoryResponse(BaseModel):
     requirements: str
     response_message: str
     image_url: Optional[str]
+    terraform_code: Optional[dict] = None
     created_at: datetime
 
     class Config:

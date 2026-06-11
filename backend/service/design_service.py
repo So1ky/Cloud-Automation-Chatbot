@@ -2,7 +2,7 @@ import yaml
 import logging
 from fastapi import HTTPException
 
-from ai_engine.graph import run_design_agent
+from ai_engine.graph import run_pipeline
 from ai_engine.agents.design.converter import convert_to_diagram_yaml
 from backend.schema.design_schema import DesignRequest, DesignResponse
 
@@ -16,13 +16,14 @@ def design(req: DesignRequest) -> DesignResponse:
         raise HTTPException(status_code=400, detail="requirements가 비어 있습니다.")
 
     try:
-        result = run_design_agent(req.requirements)
+        result = run_pipeline(req.requirements)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"에이전트 실행 오류: {e}")
 
     yaml_output = result["yaml_output"]
+    terraform_files = result["terraform_files"]
 
     try:
         parsed = yaml.safe_load(yaml_output)
@@ -38,4 +39,8 @@ def design(req: DesignRequest) -> DesignResponse:
         logger.error(f"diagram yaml conversion failed: {e}")
         raise HTTPException(status_code=500, detail="다이어그램 YAML 변환 실패")
 
-    return DesignResponse(yaml_output=yaml_output, diagram_yaml=diagram_yaml)
+    return DesignResponse(
+        yaml_output=yaml_output,
+        diagram_yaml=diagram_yaml,
+        terraform_files=terraform_files
+    )
