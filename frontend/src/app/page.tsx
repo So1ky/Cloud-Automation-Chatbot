@@ -1,7 +1,5 @@
 "use client";
-
-import { useEffect, useState, useRef } from "react";
-import Image from "next/image";
+import { useEffect, useRef, useState } from "react";
 
 interface Message {
   id: string;
@@ -11,37 +9,102 @@ interface Message {
   timestamp: Date;
 }
 
+interface ChatHistoryItem {
+  id: number;
+  requirements: string;
+  created_at: string;
+}
+
+interface ChatHistoryDetail extends ChatHistoryItem {
+  response_message: string;
+  image_url?: string | null;
+}
+
+const initialMessage = (): Message => ({
+  id: "welcome",
+  role: "bot",
+  text: "안녕하세요! 어떤 클라우드 아키텍처를 그려드릴까요?",
+  timestamp: new Date(),
+});
+
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      role: "bot",
-      text: "안녕하세요! 어떤 클라우드 아키텍처를 그려드릴까요?",
-      timestamp: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([initialMessage()]);
+  const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
+  const [selectedChatId, setSelectedChatId] = useState<number | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [healthStatus, setHealthStatus] = useState<"ok" | "error" | "loading">(
     "loading",
   );
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // 스크롤을 항상 아래로 유지
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const loadChatHistory = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/api/chat/history");
+      if (!response.ok) throw new Error("채팅 목록 조회 실패");
+
+      const history: ChatHistoryItem[] = await response.json();
+      setChatHistory(history);
+    } catch (error) {
+      console.error("Failed to load chat history:", error);
+    }
+  };
+
+  const loadChatDetail = async (chatId: number) => {
+    setIsHistoryLoading(true);
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/chat/${chatId}`);
+      if (!response.ok) throw new Error("채팅 상세 조회 실패");
+
+      const chat: ChatHistoryDetail = await response.json();
+      const timestamp = new Date(chat.created_at);
+
+      setSelectedChatId(chat.id);
+      setMessages([
+        {
+          id: `${chat.id}-user`,
+          role: "user",
+          text: chat.requirements,
+          timestamp,
+        },
+        {
+          id: `${chat.id}-bot`,
+          role: "bot",
+          text: chat.response_message,
+          imageUrl: chat.image_url || undefined,
+          timestamp,
+        },
+      ]);
+    } catch (error) {
+      console.error("Failed to load chat detail:", error);
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  };
+
+  const startNewChat = () => {
+    setSelectedChatId(null);
+    setMessages([initialMessage()]);
+    setInputValue("");
   };
 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
-  // 백엔드 상태 확인
   useEffect(() => {
     fetch("http://localhost:8000/api/health")
       .then((res) => res.json())
       .then(() => setHealthStatus("ok"))
       .catch(() => setHealthStatus("error"));
+
+    loadChatHistory();
   }, []);
 
   const handleSend = async () => {
@@ -54,7 +117,8 @@ export default function Home() {
       timestamp: new Date(),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    setSelectedChatId(null);
+    setMessages([userMessage]);
     setInputValue("");
     setIsLoading(true);
 
@@ -68,7 +132,6 @@ export default function Home() {
       if (!response.ok) throw new Error("서버 응답 오류");
 
       const data = await response.json();
-
       const botMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "bot",
@@ -77,7 +140,9 @@ export default function Home() {
         timestamp: new Date(),
       };
 
-      setMessages((prev) => [...prev, botMessage]);
+      setMessages([userMessage, botMessage]);
+      setSelectedChatId(data.chat_id);
+      await loadChatHistory();
     } catch (error) {
       console.error("Error:", error);
       const errorMessage: Message = {
@@ -86,112 +151,168 @@ export default function Home() {
         text: "죄송합니다. 오류가 발생했습니다. 백엔드 서버가 실행 중인지 확인해 주세요.",
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages([userMessage, errorMessage]);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <main className="flex flex-col h-screen bg-gray-100">
-      {/* Header */}
-      <header className="bg-white border-b px-6 py-4 flex justify-between items-center shadow-sm">
-        <h1 className="text-xl font-bold text-blue-600">Cloud Diagram Bot</h1>
-        <div className="flex items-center gap-2">
-          <span
-            className={`w-3 h-3 rounded-full ${healthStatus === "ok" ? "bg-green-500" : "bg-red-500"}`}
-          ></span>
-          <span className="text-sm text-gray-600">
-            {healthStatus === "ok"
-              ? "Backend Connected"
-              : "Backend Disconnected"}
-          </span>
-        </div>
-      </header>
-
-      {/* Chat Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        <div className="max-w-4xl mx-auto space-y-6">
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-            >
-              <div
-                className={`max-w-[80%] rounded-2xl p-4 ${
-                  msg.role === "user"
-                    ? "bg-blue-600 text-white rounded-tr-none"
-                    : "bg-white text-gray-800 border rounded-tl-none shadow-sm"
-                }`}
-              >
-                <p className="whitespace-pre-wrap">{msg.text}</p>
-                {msg.imageUrl && (
-                  <div className="mt-4 bg-gray-50 rounded-lg border overflow-hidden">
-                    <img
-                      src={msg.imageUrl}
-                      alt="Generated Diagram"
-                      className="w-full h-auto object-contain max-h-[500px]"
-                      // Next.js Image를 쓸 경우 도메인 설정이 필요하므로 일반 img 태그 사용
-                    />
-                    <div className="p-2 bg-white border-t text-center text-xs text-gray-500">
-                      <a
-                        href={msg.imageUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="hover:underline"
-                      >
-                        이미지 크게 보기
-                      </a>
-                    </div>
-                  </div>
-                )}
-                <span
-                  className={`text-[10px] block mt-1 opacity-70 ${msg.role === "user" ? "text-right" : "text-left"}`}
-                >
-                  {msg.timestamp.toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </span>
-              </div>
-            </div>
-          ))}
-          {isLoading && (
-            <div className="flex justify-start">
-              <div className="bg-white border rounded-2xl rounded-tl-none p-4 shadow-sm">
-                <div className="flex gap-1">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-.3s]"></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-.5s]"></div>
-                </div>
-              </div>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-      </div>
-
-      {/* Input Area */}
-      <div className="bg-white border-t p-4">
-        <div className="max-w-4xl mx-auto flex gap-3">
-          <input
-            type="text"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder="메시지를 입력하세요..."
-            className="flex-1 border rounded-xl px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={isLoading}
-          />
+    <main className="flex h-screen bg-gray-100">
+      <aside className="hidden w-72 shrink-0 border-r bg-white md:flex md:flex-col">
+        <div className="border-b p-4">
           <button
-            onClick={handleSend}
-            disabled={isLoading || !inputValue.trim()}
-            className="bg-blue-600 text-white px-6 py-2 rounded-xl font-medium hover:bg-blue-700 disabled:bg-gray-400 transition-colors"
+            onClick={startNewChat}
+            className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
           >
-            전송
+            새 채팅
           </button>
         </div>
-      </div>
+
+        <div className="flex-1 overflow-y-auto p-3">
+          {chatHistory.length === 0 ? (
+            <p className="px-2 py-3 text-sm text-gray-500">
+              저장된 채팅이 없습니다.
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {chatHistory.map((chat) => (
+                <button
+                  key={chat.id}
+                  onClick={() => loadChatDetail(chat.id)}
+                  className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${
+                    selectedChatId === chat.id
+                      ? "bg-blue-50 text-blue-700"
+                      : "text-gray-700 hover:bg-gray-100"
+                  }`}
+                >
+                  <span className="block truncate text-sm font-medium">
+                    {chat.requirements}
+                  </span>
+                  <span className="mt-1 block text-xs text-gray-500">
+                    {new Date(chat.created_at).toLocaleString([], {
+                      month: "2-digit",
+                      day: "2-digit",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </aside>
+
+      <section className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center justify-between border-b bg-white px-6 py-4 shadow-sm">
+          <h1 className="text-xl font-bold text-blue-600">Cloud Diagram Bot</h1>
+          <div className="flex items-center gap-2">
+            <span
+              className={`h-3 w-3 rounded-full ${
+                healthStatus === "ok" ? "bg-green-500" : "bg-red-500"
+              }`}
+            ></span>
+            <span className="text-sm text-gray-600">
+              {healthStatus === "ok"
+                ? "Backend Connected"
+                : "Backend Disconnected"}
+            </span>
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-y-auto p-4">
+          <div className="mx-auto max-w-4xl space-y-6">
+            {isHistoryLoading ? (
+              <div className="text-center text-sm text-gray-500">
+                채팅을 불러오는 중입니다.
+              </div>
+            ) : (
+              messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex ${
+                    msg.role === "user" ? "justify-end" : "justify-start"
+                  }`}
+                >
+                  <div
+                    className={`max-w-[80%] rounded-2xl p-4 ${
+                      msg.role === "user"
+                        ? "rounded-tr-none bg-blue-600 text-white"
+                        : "rounded-tl-none border bg-white text-gray-800 shadow-sm"
+                    }`}
+                  >
+                    <p className="whitespace-pre-wrap">{msg.text}</p>
+                    {msg.imageUrl && (
+                      <div className="mt-4 overflow-hidden rounded-lg border bg-gray-50">
+                        <img
+                          src={msg.imageUrl}
+                          alt="Generated Diagram"
+                          className="h-auto max-h-[500px] w-full object-contain"
+                        />
+                        <div className="border-t bg-white p-2 text-center text-xs text-gray-500">
+                          <a
+                            href={msg.imageUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="hover:underline"
+                          >
+                            이미지 크게 보기
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                    <span
+                      className={`mt-1 block text-[10px] opacity-70 ${
+                        msg.role === "user" ? "text-right" : "text-left"
+                      }`}
+                    >
+                      {msg.timestamp.toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
+
+            {isLoading && (
+              <div className="flex justify-start">
+                <div className="rounded-2xl rounded-tl-none border bg-white p-4 shadow-sm">
+                  <div className="flex gap-1">
+                    <div className="h-2 w-2 animate-bounce rounded-full bg-gray-400"></div>
+                    <div className="h-2 w-2 animate-bounce rounded-full bg-gray-400 [animation-delay:-.3s]"></div>
+                    <div className="h-2 w-2 animate-bounce rounded-full bg-gray-400 [animation-delay:-.5s]"></div>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+
+        <div className="border-t bg-white p-4">
+          <div className="mx-auto flex max-w-4xl gap-3">
+            <input
+              type="text"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+              placeholder="메시지를 입력하세요..."
+              className="flex-1 rounded-xl border px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isLoading}
+            />
+            <button
+              onClick={handleSend}
+              disabled={isLoading || !inputValue.trim()}
+              className="rounded-xl bg-blue-600 px-6 py-2 font-medium text-white transition-colors hover:bg-blue-700 disabled:bg-gray-400"
+            >
+              전송
+            </button>
+          </div>
+        </div>
+      </section>
     </main>
   );
 }
