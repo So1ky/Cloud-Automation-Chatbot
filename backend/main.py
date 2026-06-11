@@ -1,17 +1,18 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
-from dotenv import load_dotenv
 import logging
 import os
 
-from backend.router import chat_router
+from backend.router import chat_router, user_router
 from backend.database.config import Base, engine
 from backend.database import models
 from ai_engine.rag.knowledge_base import load_knowledge_base
 
-load_dotenv()
 
 # 로깅 설정 (에러 확인용)
 logging.basicConfig(level=logging.INFO)
@@ -57,6 +58,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # 라우터 등록
 app.include_router(chat_router.router)
+app.include_router(user_router.router)
 
 @app.get("/api/health")
 async def health_check():
