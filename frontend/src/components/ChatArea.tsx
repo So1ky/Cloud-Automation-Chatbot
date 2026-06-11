@@ -98,18 +98,38 @@ export default function ChatArea({
                         className="h-auto max-h-[500px] w-full object-contain hover:scale-[1.01] transition-transform"
                       />
                       <div className="border-t border-slate-200 bg-white p-3 text-center text-xs">
-                        <a
-                          href={msg.imageUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 font-semibold text-blue-600 hover:underline"
+                        <button
+                          onClick={() => {
+                            try {
+                              // Base64 문자열을 바이너리 데이터로 디코딩
+                              const base64Data = msg.imageUrl!.split(",")[1];
+                              const byteCharacters = atob(base64Data);
+                              const byteNumbers = new Array(byteCharacters.length);
+                              for (let i = 0; i < byteCharacters.length; i++) {
+                                byteNumbers[i] = byteCharacters.charCodeAt(i);
+                              }
+                              const byteArray = new Uint8Array(byteNumbers);
+                              
+                              // 바이너리 데이터를 Blob 객체로 생성 (MIME 타입 지정)
+                              const blob = new Blob([byteArray], { type: "image/png" });
+                              
+                              // Blob을 가리키는 고유 Object URL 생성
+                              const blobUrl = URL.createObjectURL(blob);
+                              
+                              // 새 탭에서 Blob URL 열기
+                              window.open(blobUrl, "_blank");
+                            } catch (error) {
+                              console.error("Failed to open Base64 image in new tab:", error);
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 font-semibold text-blue-600 hover:underline cursor-pointer"
                         >
                           <span>새 탭에서 원본 이미지 열기</span>
                           <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
                             <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
                             <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
                           </svg>
-                        </a>
+                        </button>
                       </div>
                     </div>
                   )}
