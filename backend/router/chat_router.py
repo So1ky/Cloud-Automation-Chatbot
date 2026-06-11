@@ -31,7 +31,7 @@ def handle_chat(
     current_user = Depends(user_service.get_current_user_optional)
 )-> ChatResponse:
     design_result = design(req)
-    image_filename = generate_diagram(design_result.diagram_yaml)
+    base64_image = generate_diagram(design_result.diagram_yaml)
 
     user_id = current_user.id if current_user else None
 
@@ -39,7 +39,7 @@ def handle_chat(
         user_id=user_id,
         requirements=req.requirements,
         response_message="성공적으로 생성되었습니다.",
-        image_url=f"http://localhost:8000/static/{image_filename}",
+        image_url=base64_image,
     )
     db.add(chat_history)
     db.commit()
