@@ -1,4 +1,4 @@
-﻿# AI Engine 의존성
+# AI Engine 의존성
 # 설치: pip install -r requirements.txt
 
 # LangChain / LangGraph
@@ -46,4 +46,5 @@ typing-inspection==0.4.2
 typing_extensions==4.15.0
 sqlalchemy==2.0.49
 email-validator==2.3.0
-passlib==1.7.4
+pwdlib[argon2]==0.3.0
+PyJWT==2.13.0
