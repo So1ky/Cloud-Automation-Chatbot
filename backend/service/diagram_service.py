@@ -2,8 +2,7 @@ import os
 import subprocess
 import tempfile
 import logging
-from uuid import uuid4
-
+import base64
 from fastapi import HTTPException
 
 # 로깅 설정 (에러 확인용)
@@ -11,17 +10,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-ROUTER_DIR = os.path.dirname(os.path.abspath(__file__))
-BACKEND_DIR = os.path.dirname(ROUTER_DIR)
-STATIC_DIR = os.path.join(BACKEND_DIR, "static")
-
-if not os.path.exists(STATIC_DIR):
-    os.makedirs(STATIC_DIR)
-
 def generate_diagram(diagram_yaml: str) -> str:
-    output_filename = f"diagram-{uuid4().hex}.png"
-    output_path = os.path.join(STATIC_DIR, output_filename)
-
+    # 1. 임시 YAML 파일 생성
     with tempfile.NamedTemporaryFile(
         mode="w",
         suffix=".yaml",
@@ -31,18 +21,27 @@ def generate_diagram(diagram_yaml: str) -> str:
         temp_yaml.write(diagram_yaml)
         temp_yaml_path = temp_yaml.name
     
+    # 2. 임시 PNG 이미지 저장 경로 설정
+    temp_img_path = temp_yaml_path + ".png"
+    
     logger.info("Generating diagram with awsdac...")
     
     try:
+        # 3. awsdac로 임시 이미지 생성
         subprocess.run(
-            ["awsdac", temp_yaml_path, "-o", output_path],
-            check=True, # 명령어 실패 시 예외 발생
-            capture_output=True, # 표준 출력과 표준 에러 캡처
-            text=True,  # 텍스트 모드로 출력 캡처
-            timeout=30  # 타임아웃 설정 (30초)
+            ["awsdac", temp_yaml_path, "-o", temp_img_path],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30
         )
         logger.info("awsdac execution successful")
-        return output_filename
+        
+        # 4. 이미지 파일을 읽어 Base64 텍스트로 인코딩
+        with open(temp_img_path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
+        
+        return f"data:image/png;base64,{encoded_string}"
         
     except subprocess.TimeoutExpired:
         logger.error("awsdac execution timed out")
@@ -56,3 +55,15 @@ def generate_diagram(diagram_yaml: str) -> str:
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # 5. 임시 생성된 파일들을 디스크에서 즉시 지웁니다.
+        if os.path.exists(temp_yaml_path):
+            try:
+                os.remove(temp_yaml_path)
+            except Exception as e:
+                logger.error(f"Failed to remove temp yaml: {e}")
+        if os.path.exists(temp_img_path):
+            try:
+                os.remove(temp_img_path)
+            except Exception as e:
+                logger.error(f"Failed to remove temp image: {e}")
