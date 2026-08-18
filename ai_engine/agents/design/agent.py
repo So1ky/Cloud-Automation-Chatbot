@@ -2,9 +2,9 @@
 
 import yaml
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from openai import APIConnectionError, APITimeoutError, RateLimitError
 
+from ai_engine.config import get_llm
 from ai_engine.rag.knowledge_base import search_knowledge_base
 from ai_engine.state.architecture_schema import ArchitectureSpec
 from ai_engine.state.graph_state import GraphState
@@ -74,36 +74,36 @@ Frontend/Static file optimization rules:
 
 
 Async processing rules:
-26. When the user mentions tasks that take a long time (e.g. AI processing, video encoding, batch jobs, background tasks):
+23. When the user mentions tasks that take a long time (e.g. AI processing, video encoding, batch jobs, background tasks):
     - ALWAYS use SQS (messaging) as a queue between the web server and the worker.
     - ALWAYS add a Lambda function (compute, type: Lambda, subnets: null) as the async worker.
     - NEVER generate SQS without a corresponding Lambda worker.
     - Flow: ECS (web, private subnet) → SQS → Lambda (no VPC) → storage/database
-27. When the user mentions "notification", "push alert", "알림", or "notify when done":
+24. When the user mentions "notification", "push alert", "알림", or "notify when done":
     - ALWAYS add SNS (messaging) to send the completion notification.
     - Flow: Lambda/Worker → SNS → User
 
 Security and encryption rules:
-28. When the user mentions "encrypt", "암호화", or "secure storage of sensitive data":
+25. When the user mentions "encrypt", "암호화", or "secure storage of sensitive data":
     - ALWAYS add KMS to the security section (kms: true).
     - KMS is used to encrypt data stored in DynamoDB, S3, or RDS.
-29. When the user mentions "login", "회원", "auth", or "user account":
+26. When the user mentions "login", "회원", "auth", or "user account":
     - ALWAYS add Cognito to the auth section.
 
 Global service rules:
-30. When the user mentions "global", "worldwide", "전 세계", or multiple regions/countries:
+27. When the user mentions "global", "worldwide", "전 세계", or multiple regions/countries:
     - ALWAYS include cdn (CloudFront) and dns (Route 53) for global content delivery.
     - Set DynamoDB multi_az: true or mention Global Table in the architecture.
 
 Data flow design rules (for clean diagram readability):
-31. Always design with a clear top-to-bottom data flow:
+28. Always design with a clear top-to-bottom data flow:
     - Entry point at top: User → DNS/CDN/ALB
     - Processing in middle: ECS/Lambda
     - Storage at bottom: RDS/DynamoDB/S3
-32. Include ONLY the components that are in the actual data path. Do not add services
+29. Include ONLY the components that are in the actual data path. Do not add services
     unless the user explicitly needs them (e.g. do NOT add Cognito unless auth is required,
     do NOT add ECR unless container registry is mentioned).
-33. Keep architectures minimal and focused. Fewer components = cleaner diagram.
+30. Keep architectures minimal and focused. Fewer components = cleaner diagram.
     Only add monitoring (CloudWatch), security (WAF, GuardDuty), or messaging (SQS)
     when the user explicitly requests those features.
 
@@ -116,30 +116,49 @@ The YAML structure follows these types:
 """
 
 
-def design_node(state: GraphState) -> GraphState:
-    """LangGraph 노드: RAG 검색 → GPT-4o mini (structured output) → YAML 변환."""
+def design_node(state: GraphState) -> dict:
+    """LangGraph 노드: RAG 검색 → GPT-4o mini (structured output) → YAML 변환.
+
+    검증 에이전트가 아키텍처 문제로 되돌려 보낸 경우(feedback 존재)에는
+    이전 YAML과 검증 피드백을 함께 전달해 설계를 수정하도록 한다.
+    """
     user_requirements = state["user_requirements"]
+    feedback = state.get("feedback", "")
+    previous_yaml = state.get("yaml_output", "")
+    is_retry = bool(feedback) and state.get("fix_target") == "design"
 
-    print("[설계 에이전트] RAG 검색 중...")
-    try:
-        rag_context = search_knowledge_base(user_requirements)
-    except Exception as e:
-        print(f"[설계 에이전트] RAG 검색 실패: {e}")
-        rag_context = "Well-Architected Framework 문서를 검색하지 못했습니다."
+    # 재시도가 아닐 때만 RAG 검색 (재시도 시 기존 컨텍스트 재사용)
+    rag_context = state.get("rag_context", "")
+    if not is_retry or not rag_context:
+        print("[설계 에이전트] RAG 검색 중...")
+        try:
+            rag_context = search_knowledge_base(user_requirements)
+        except Exception as e:
+            print(f"[설계 에이전트] RAG 검색 실패: {e}")
+            rag_context = "Well-Architected Framework 문서를 검색하지 못했습니다."
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    llm = get_llm("design")
     structured_llm = llm.with_structured_output(ArchitectureSpec)
+
+    human_content = (
+        f"## AWS Well-Architected Framework 참고 문서\n\n"
+        f"{rag_context}\n\n"
+        f"---\n\n"
+        f"## 사용자 요구사항\n\n{user_requirements}"
+    )
+    if is_retry:
+        print("[설계 에이전트] 검증 피드백 반영하여 재설계 중...")
+        human_content += (
+            f"\n\n---\n\n"
+            f"## 이전 설계 (검증 실패)\n\n{previous_yaml}\n\n"
+            f"## 검증 에이전트 피드백\n\n{feedback}\n\n"
+            f"위 피드백에서 지적된 아키텍처 문제를 해결한 새 설계를 생성하세요. "
+            f"문제가 없는 부분은 이전 설계를 유지하세요."
+        )
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(
-            content=(
-                f"## AWS Well-Architected Framework 참고 문서\n\n"
-                f"{rag_context}\n\n"
-                f"---\n\n"
-                f"## 사용자 요구사항\n\n{user_requirements}"
-            )
-        ),
+        HumanMessage(content=human_content),
     ]
 
     print("[설계 에이전트] GPT-4o mini 호출 중...")
@@ -159,11 +178,12 @@ def design_node(state: GraphState) -> GraphState:
 
     print("[설계 에이전트] YAML 생성 완료")
 
+    # LangGraph 노드는 변경된 키만 반환한다.
+    # messages는 add_messages reducer가 자동으로 기존 히스토리에 append한다.
     return {
-        **state,
         "rag_context": rag_context,
         "yaml_output": yaml_output,
-        "messages": state.get("messages", []) + [
+        "messages": [
             HumanMessage(content=user_requirements),
             AIMessage(content=yaml_output),
         ],

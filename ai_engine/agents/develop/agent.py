@@ -1,11 +1,11 @@
 """개발 에이전트: 설계 에이전트의 YAML 명세 → Terraform HCL 코드 생성."""
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from openai import APIConnectionError, APITimeoutError, RateLimitError
 from pydantic import BaseModel, Field
 
 from ai_engine.agents.develop.prompts import SYSTEM_PROMPT
+from ai_engine.config import get_llm
 from ai_engine.state.graph_state import GraphState
 
 
@@ -18,22 +18,41 @@ class TerraformFiles(BaseModel):
     outputs_tf: str = Field(description="Content of outputs.tf — all output value declarations")
 
 
-def develop_node(state: GraphState) -> GraphState:
-    """LangGraph 노드: YAML 명세 → Terraform HCL 4개 파일 생성."""
-    yaml_output = state["yaml_output"]
+def develop_node(state: GraphState) -> dict:
+    """LangGraph 노드: YAML 명세 → Terraform HCL 4개 파일 생성.
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    검증 에이전트가 코드 문제로 되돌려 보낸 경우(feedback 존재)에는
+    이전 Terraform 파일과 검증 오류를 함께 전달해 코드를 수정하도록 한다.
+    """
+    yaml_output = state["yaml_output"]
+    feedback = state.get("feedback", "")
+    previous_files = state.get("terraform_files", {})
+    is_retry = bool(feedback) and state.get("fix_target") == "develop"
+
+    llm = get_llm("develop")
     structured_llm = llm.with_structured_output(TerraformFiles)
+
+    human_content = (
+        "## 아키텍처 명세 (YAML)\n\n"
+        f"{yaml_output}\n\n"
+        "위 명세를 기반으로 providers.tf, variables.tf, main.tf, outputs.tf 를 생성하세요."
+    )
+    if is_retry and previous_files:
+        print("[개발 에이전트] 검증 피드백 반영하여 코드 수정 중...")
+        previous_code = "\n\n".join(
+            f"### {name}\n```hcl\n{content}\n```" for name, content in previous_files.items()
+        )
+        human_content += (
+            f"\n\n---\n\n"
+            f"## 이전 생성 코드 (검증 실패)\n\n{previous_code}\n\n"
+            f"## 검증 에이전트 피드백\n\n{feedback}\n\n"
+            f"위 피드백에서 지적된 오류를 모두 수정한 전체 파일을 다시 생성하세요. "
+            f"오류가 없는 부분은 이전 코드를 그대로 유지하세요."
+        )
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(
-            content=(
-                "## 아키텍처 명세 (YAML)\n\n"
-                f"{yaml_output}\n\n"
-                "위 명세를 기반으로 providers.tf, variables.tf, main.tf, outputs.tf 를 생성하세요."
-            )
-        ),
+        HumanMessage(content=human_content),
     ]
 
     print("[개발 에이전트] Terraform 코드 생성 중...")
@@ -59,10 +78,11 @@ def develop_node(state: GraphState) -> GraphState:
     for filename, content in terraform_files.items():
         print(f"  - {filename}: {len(content.splitlines())}줄")
 
+    # messages에는 전체 코드 대신 요약만 남긴다 (히스토리 토큰 낭비 방지).
+    summary = "Terraform 파일 생성 완료: " + ", ".join(
+        f"{name}({len(content.splitlines())}줄)" for name, content in terraform_files.items()
+    )
     return {
-        **state,
         "terraform_files": terraform_files,
-        "messages": state.get("messages", []) + [
-            AIMessage(content=str(terraform_files)),
-        ],
+        "messages": [AIMessage(content=summary)],
     }
