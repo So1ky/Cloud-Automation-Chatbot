@@ -223,6 +223,18 @@ Generate exactly 4 Terraform files:
 - When the spec includes monitoring (CloudWatch), generate at least the log groups
   (aws_cloudwatch_log_group) referenced by ECS/Lambda logging configuration.
 
+## KMS Key Policy Rule
+- A customer-managed aws_kms_key used by AWS services MUST include a key policy granting
+  those service principals access — without it, terraform apply succeeds but the service
+  gets AccessDenied at runtime:
+  - CloudTrail log encryption → principal cloudtrail.amazonaws.com: kms:GenerateDataKey*, kms:DescribeKey
+  - CloudFront reading SSE-KMS encrypted S3 objects → principal cloudfront.amazonaws.com: kms:Decrypt
+    (with aws:SourceArn condition on the distribution when possible)
+  - CloudWatch Logs encryption → principal logs.<region>.amazonaws.com: kms:Encrypt*, kms:Decrypt*, kms:GenerateDataKey*
+- ALWAYS also include the account-root statement so the key stays manageable:
+  data "aws_caller_identity" "current" {}
+  principal AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root", actions ["kms:*"]
+
 ## HCL Formatting Rule
 - NEVER write nested blocks on a single line — HCL forbids it and terraform init fails:
   WRONG: restrictions { geo_restriction { restriction_type = "none" } }
