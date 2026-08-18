@@ -224,3 +224,9 @@ ai_engine/docs/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Terraform provider plugin cache (verify agent)
+ai_engine/agents/verify/.terraform-plugin-cache/
+
+# e2e 테스트 산출물
+e2e_output/

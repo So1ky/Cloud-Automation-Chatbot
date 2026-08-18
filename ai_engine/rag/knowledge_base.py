@@ -18,7 +18,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain.retrievers import EnsembleRetriever
@@ -203,7 +203,8 @@ def expand_query(requirement: str) -> tuple[str, list[str]]:
     Returns:
         (translated_query, [query1, query2, query3, query4])
     """
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+    from ai_engine.config import get_llm
+    llm = get_llm("rag", temperature=0.3)
     structured_llm = llm.with_structured_output(_QueryExpansion)
 
     result: _QueryExpansion = structured_llm.invoke([
@@ -236,20 +237,19 @@ def search_knowledge_base(query: str, k: int = 8, top_k: int = 5) -> str:
     print(f"[RAG] Multi-query {len(multi_queries)}개 생성")
     all_queries = [translated_original] + multi_queries
 
-    # 3. 각 쿼리별 하이브리드 검색 → 후보 풀 구성 (중복 제거)
+    # 2. 각 쿼리별 하이브리드 검색 → 후보 풀 구성 (중복 제거)
     vectorstore = load_knowledge_base()
     bm25_retriever = _get_bm25_retriever(k=k)
+    vector_retriever = vectorstore.as_retriever(search_kwargs={"k": k})
+    ensemble = EnsembleRetriever(
+        retrievers=[vector_retriever, bm25_retriever],
+        weights=[0.6, 0.4],
+    )
 
     seen_contents: set[str] = set()
     candidate_docs: list[Document] = []
 
     for q in all_queries:
-        vector_retriever = vectorstore.as_retriever(search_kwargs={"k": k})
-        bm25_retriever.k = k
-        ensemble = EnsembleRetriever(
-            retrievers=[vector_retriever, bm25_retriever],
-            weights=[0.6, 0.4],
-        )
         for doc in ensemble.invoke(q):
             key = doc.page_content[:150]
             if key not in seen_contents:

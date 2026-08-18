@@ -168,7 +168,9 @@ class Architecture(BaseModel):
     name: str
     description: str
     region: str = "ap-northeast-2"
-    vpc: VPC
+    # 서버리스(관리형 서비스만 사용) 아키텍처는 VPC가 없어야 하므로 Optional.
+    # 프롬프트 규칙 4~5(VPC 생성 조건)와 일치시키기 위함.
+    vpc: Optional[VPC] = None
     networking: Optional[Networking] = None
     compute: List[ComputeInstance]
     auto_scaling: Optional[List[AutoScaling]] = None
