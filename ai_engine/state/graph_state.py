@@ -35,5 +35,8 @@ class GraphState(TypedDict):
     # Self-Healing 재시도 횟수 (무한 루프 방지)
     retry_count: int
 
+    # 재설계 발동 횟수 (실행당 1회로 제한 — 설계 재생성이 코드 진행을 리셋시키는 것 방지)
+    design_heal_count: int
+
     # 에이전트 간 메시지 히스토리 (LangGraph 내장 reducer)
     messages: Annotated[list, add_messages]

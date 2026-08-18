@@ -35,6 +35,7 @@ def _initial_state(**overrides) -> GraphState:
         "fix_target": None,
         "feedback": "",
         "retry_count": 0,
+        "design_heal_count": 0,
         "messages": [],
     }
     state.update(overrides)
