@@ -92,6 +92,11 @@ def main() -> None:
             else:
                 print(f"- 비용 분석: 월 예상 {cost.get('total_monthly_cost')} {cost.get('currency')}")
 
+            if result.get("validation_summary"):
+                print("\n[4단계] 사용자 안내문:")
+                print("-" * 55)
+                print(result["validation_summary"])
+
             print("\n다음 요구사항을 입력하거나 'exit'으로 종료하세요.\n")
 
         except Exception as e:

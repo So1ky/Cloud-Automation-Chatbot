@@ -43,6 +43,8 @@ for name, content in result["terraform_files"].items():
 (case_dir / "validation_report.json").write_text(
     json.dumps(result["validation_report"], ensure_ascii=False, indent=2), encoding="utf-8"
 )
+if result.get("validation_summary"):
+    (case_dir / "user_summary.md").write_text(result["validation_summary"], encoding="utf-8")
 
 report = result["validation_report"]
 print("\n" + "=" * 60)

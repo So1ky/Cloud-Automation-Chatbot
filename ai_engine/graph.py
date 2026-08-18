@@ -152,16 +152,26 @@ def run_verify_agent(yaml_output: str, terraform_files: dict) -> dict:
 
 def run_pipeline(user_requirements: str) -> dict:
     """설계 → 개발 → 검증(Self-Healing) 전체 파이프라인을 실행한다."""
+    from ai_engine.report import generate_user_summary
+
     # 재귀 한도: 노드 수(3) × (1 + 최대 재시도) + 여유
     recursion_limit = 3 * (MAX_HEAL_RETRIES + 1) + 5
     result = _pipeline_app.invoke(
         _initial_state(user_requirements=user_requirements),
         config={"recursion_limit": recursion_limit},
     )
+
+    # 검증 결과를 사용자용 설명문으로 변환 (다이어그램·코드와 함께 사용자에게 전달)
+    print("[리포트] 사용자용 검증 설명문 생성 중...")
+    validation_summary = generate_user_summary(
+        result["validation_report"], result["validation_passed"]
+    )
+
     return {
         "yaml_output": result["yaml_output"],
         "rag_context": result["rag_context"],
         "terraform_files": result["terraform_files"],
         "validation_report": result["validation_report"],
         "validation_passed": result["validation_passed"],
+        "validation_summary": validation_summary,
     }
