@@ -166,6 +166,74 @@ Generate exactly 4 Terraform files:
 - aws_db_instance ALWAYS requires allocated_storage (in GB):
   allocated_storage = 20
 
+## DynamoDB Rule
+- Terraform has NO key_schema block — that is CloudFormation syntax and terraform validate rejects it.
+  Define keys with the hash_key / range_key ATTRIBUTES:
+  resource "aws_dynamodb_table" "<name>" {
+    name         = "<name>"
+    billing_mode = "PAY_PER_REQUEST"
+    hash_key     = "SensorID"
+    range_key    = "Timestamp"   # include only when a sort key is needed
+    attribute {
+      name = "SensorID"
+      type = "S"
+    }
+    attribute {
+      name = "Timestamp"
+      type = "N"
+    }
+  }
+- Every attribute referenced by hash_key/range_key MUST have a matching attribute block,
+  and ONLY key attributes may have attribute blocks (non-key columns are schemaless).
+
+## Lambda Rule
+- The deployment package does not exist at plan time. NEVER use filebase64sha256(), filesha256(),
+  or file() on a local zip — terraform validate will fail with "no such file or directory".
+- NEVER include source_code_hash. Use a plain filename placeholder only:
+  resource "aws_lambda_function" "<name>" {
+    function_name = "<name>"
+    filename      = "lambda_function.zip"   # placeholder — replace with real package
+    handler       = "index.handler"
+    runtime       = "python3.12"
+    role          = aws_iam_role.<name>_role.arn
+  }
+- Environment variables MUST be nested inside a variables map — never directly under environment:
+  environment {
+    variables = {
+      KINESIS_STREAM_NAME = aws_kinesis_stream.<name>.name
+    }
+  }
+- ALWAYS create the Lambda execution role (aws_iam_role with lambda.amazonaws.com assume role policy)
+  and attach AWSLambdaBasicExecutionRole via aws_iam_role_policy_attachment.
+- When Lambda consumes Kinesis/SQS/DynamoDB streams, create aws_lambda_event_source_mapping
+  and give the role the matching read permissions.
+
+## Completeness Rules (always generate these together)
+- EVERY aws_s3_bucket must have a matching aws_s3_bucket_public_access_block with all four
+  settings true — unless the bucket is a public website origin.
+- When the spec has security.waf = true AND an ALB exists, ALWAYS add
+  aws_wafv2_web_acl_association linking the ACL to the ALB. For CloudFront, set web_acl_id
+  on the distribution (scope must be CLOUDFRONT in that case).
+- EVERY IAM role must have policy attachments covering ALL AWS services that component
+  uses according to the spec (e.g. a worker that reads SQS and writes S3+DynamoDB needs
+  policies for all three). Scope actions to what the component needs — no "*".
+- ECS task definition images: NEVER hardcode nginx:latest or :latest defaults. Define
+  variable "<name>_image" (type string, with a clear placeholder default like
+  "REPLACE_ME:tag" and description) and reference it.
+- When the spec includes monitoring (CloudWatch), generate at least the log groups
+  (aws_cloudwatch_log_group) referenced by ECS/Lambda logging configuration.
+
+## HCL Formatting Rule
+- NEVER write nested blocks on a single line — HCL forbids it and terraform init fails:
+  WRONG: restrictions { geo_restriction { restriction_type = "none" } }
+  RIGHT:
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+- Always expand every block (even one-attribute blocks) across multiple lines.
+
 ## Important Rules
 - NEVER hardcode AWS account IDs, ARNs, or access keys
 - NEVER use deprecated attributes
