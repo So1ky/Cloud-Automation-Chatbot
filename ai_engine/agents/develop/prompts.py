@@ -208,6 +208,24 @@ Generate exactly 4 Terraform files:
     }]
   })
 
+## Kinesis Firehose Rule
+- When the spec includes BOTH a Kinesis stream AND a Firehose delivery stream (or a
+  "stream → cheap storage archive" path), the Firehose MUST consume from the stream —
+  ALWAYS include kinesis_source_configuration:
+  resource "aws_kinesis_firehose_delivery_stream" "<name>" {
+    name        = "<name>"
+    destination = "extended_s3"
+    kinesis_source_configuration {
+      kinesis_stream_arn = aws_kinesis_stream.<stream>.arn
+      role_arn           = aws_iam_role.<firehose_role>.arn
+    }
+    extended_s3_configuration { ... }
+  }
+- Without kinesis_source_configuration the Firehose is created in Direct PUT mode and
+  silently receives NOTHING from the stream (apply succeeds, pipeline is broken).
+- The Firehose IAM role must have both the S3 write permissions AND the Kinesis read
+  permissions (kinesis:DescribeStream/GetRecords/GetShardIterator/ListShards).
+
 ## VPC Endpoint Rule
 - Interface VPC endpoints are ONLY for AWS public-service APIs reached over the internet
   (S3/KMS/CloudWatch Logs/Secrets Manager/Bedrock/SQS/SNS/ECR ...).

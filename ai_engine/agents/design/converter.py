@@ -38,8 +38,10 @@ STORAGE_TYPE_MAP = {
 }
 
 MESSAGING_TYPE_MAP = {
-    "SQS":         "AWS::SQS::Queue",
-    "SNS":         "AWS::SNS::Topic",
+    # 리소스 아이콘(::Queue/::Topic)은 라벨이 "Queue"/"Topic"으로만 나와 모호함 →
+    # 다른 서비스들과 일관되게 서비스 아이콘(풀네임 라벨) 사용
+    "SQS":         "AWS::SQS",
+    "SNS":         "AWS::SNS",
     # awsdac 정의의 EventBridge 서비스명은 AWS::Events (AWS::EventBridge는 미지원 → 에러)
     "EventBridge": "AWS::Events",
 }
@@ -336,6 +338,9 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
     for item in arch.get("streaming", []):
         rid = item["name"]
         resources[rid] = {"Type": STREAMING_TYPE_MAP.get(item["type"], "AWS::Kinesis::Stream")}
+        # Firehose는 전용 아이콘이 없어 범용 Kinesis 아이콘을 쓰므로 라벨로 구분
+        if item["type"] == "KinesisFirehose":
+            resources[rid]["Title"] = "Amazon Data Firehose"
         cloud_streaming.append(rid)
 
     for item in arch.get("auth", []):
