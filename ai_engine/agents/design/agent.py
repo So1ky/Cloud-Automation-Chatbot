@@ -29,7 +29,10 @@ VPC usage rules:
    Adding Lambda to a VPC without a NAT Gateway or VPC Endpoint will BREAK connectivity to these services.
 
 Subnet assignment rules:
-6. load_balancer.subnets must contain 2+ PUBLIC subnet names in different AZs (ALB requires multi-AZ).
+6. load_balancer.subnets must contain 2+ subnet names in different AZs (ALB requires multi-AZ).
+   - Internet-facing service: internal=false + PUBLIC subnets.
+   - Internal-only service (사내망/VPN/전용선 접근, "내부 직원만", "외부 노출 금지"):
+     ALWAYS set internal=true + PRIVATE subnets. NEVER place an internal ALB in public subnets.
 7. compute.subnets for EKS/ECS must contain 2+ PRIVATE subnet names in different AZs for high availability.
    NEVER place ECS/EKS/Fargate in a public subnet. Only ALB and NAT Gateway belong in public subnets.
 8. compute.subnets for EC2/Lambda can be a single subnet.

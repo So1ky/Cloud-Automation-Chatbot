@@ -188,6 +188,32 @@ Generate exactly 4 Terraform files:
   2. aws_lb_target_group — target group (target_type = "ip" for FARGATE)
   3. aws_lb_listener — listener forwarding to the target group
 - outputs.tf must reference aws_lb.<name>.dns_name, NOT aws_alb.<name>.dns_name
+- Respect the spec's internal flag:
+  - internal: true  → aws_lb with internal = true, subnets = PRIVATE subnets
+  - internal: false → aws_lb with internal = false, subnets = PUBLIC subnets
+  NEVER place an internal load balancer in public subnets.
+
+## OpenSearch (VPC) Rule
+- aws_opensearch_domain with vpc_options MUST include an access_policies block —
+  without it, IAM-signed requests are rejected at runtime even though apply succeeds.
+  Network access is already restricted by the security group, so use the standard
+  in-VPC policy:
+  access_policies = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { AWS = "*" }
+      Action    = "es:ESHttp*"
+      Resource  = "arn:aws:es:${var.aws_region}:${data.aws_caller_identity.current.account_id}:domain/<domain-name>/*"
+    }]
+  })
+
+## VPC Endpoint Rule
+- Interface VPC endpoints are ONLY for AWS public-service APIs reached over the internet
+  (S3/KMS/CloudWatch Logs/Secrets Manager/Bedrock/SQS/SNS/ECR ...).
+- NEVER create a VPC endpoint for resources that already live INSIDE the VPC —
+  an OpenSearch domain with vpc_options, RDS, ElastiCache. They are reached directly
+  through their VPC network interfaces; an endpoint for them is wasted cost (~$8/AZ/month).
 
 ## ECS FARGATE Rule
 - When launch_type = "FARGATE", aws_ecs_task_definition MUST have cpu and memory at the TASK level (not only inside container_definitions):
