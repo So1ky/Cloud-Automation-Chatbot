@@ -40,13 +40,16 @@ STORAGE_TYPE_MAP = {
 MESSAGING_TYPE_MAP = {
     "SQS":         "AWS::SQS::Queue",
     "SNS":         "AWS::SNS::Topic",
-    "EventBridge": "AWS::EventBridge::EventBus",
+    # awsdac 정의의 EventBridge 서비스명은 AWS::Events (AWS::EventBridge는 미지원 → 에러)
+    "EventBridge": "AWS::Events",
 }
 
 STREAMING_TYPE_MAP = {
     "Kinesis":         "AWS::Kinesis::Stream",
-    "KinesisFirehose": "AWS::KinesisFirehose::DeliveryStream",
-    "MSK":             "AWS::MSK::Cluster",
+    # awsdac 정의에 Firehose 아이콘이 없음 → 범용 Kinesis 아이콘으로 대체
+    # (미지원 타입을 쓰면 awsdac이 "unknown resource" 에러로 다이어그램 생성 실패)
+    "KinesisFirehose": "AWS::Kinesis",
+    "MSK":             "AWS::MSK",
 }
 
 
@@ -345,11 +348,22 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
         resources[rid] = {"Type": "AWS::SecretsManager::Secret"}
         cloud_support.append(rid)
 
-    # KMS 렌더링 (security.kms: true 일 때)
-    kms_exists = arch.get("security", {}).get("kms", False)
+    # 보안 서비스 렌더링 (security 섹션 — KMS/WAF/GuardDuty/Shield)
+    security_cfg = arch.get("security", {}) or {}
+    kms_exists = security_cfg.get("kms", False)
     if kms_exists:
         resources["KMS"] = {"Type": "AWS::KMS::Key"}
         cloud_support.append("KMS")
+    if security_cfg.get("waf", False):
+        # AWS::WAFv2::WebACL은 라벨이 "Rule"로 렌더링되므로 서비스 아이콘(AWS WAF) 사용
+        resources["WAF"] = {"Type": "AWS::WAF"}
+        cloud_support.append("WAF")
+    if security_cfg.get("guard_duty", False):
+        resources["GuardDuty"] = {"Type": "AWS::GuardDuty"}
+        cloud_support.append("GuardDuty")
+    if security_cfg.get("shield", False):
+        resources["Shield"] = {"Type": "AWS::Shield"}
+        cloud_support.append("Shield")
 
     # ── 9b. aws_cloud_children 순서 조립 ────────────────────────────────────
     # 데이터 흐름 순서:
