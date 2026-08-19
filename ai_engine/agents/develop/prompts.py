@@ -93,11 +93,50 @@ Generate exactly 4 Terraform files:
     user_pool_id = aws_cognito_user_pool.<name>.id
   }
 
-- When the spec includes security.waf = true, ALWAYS generate:
+- When the spec includes security.waf = true, ALWAYS generate the ACL WITH AWS managed rules —
+  an ACL with only `default_action allow {}` and no rules provides NO protection and fails review:
   resource "aws_wafv2_web_acl" "main" {
     name  = "${var.project_name}-waf"
     scope = "REGIONAL"
-    default_action { allow {} }
+    default_action {
+      allow {}
+    }
+    rule {
+      name     = "aws-common-rules"
+      priority = 1
+      override_action {
+        none {}
+      }
+      statement {
+        managed_rule_group_statement {
+          name        = "AWSManagedRulesCommonRuleSet"
+          vendor_name = "AWS"
+        }
+      }
+      visibility_config {
+        cloudwatch_metrics_enabled = true
+        metric_name                = "aws-common-rules"
+        sampled_requests_enabled   = true
+      }
+    }
+    rule {
+      name     = "aws-known-bad-inputs"
+      priority = 2
+      override_action {
+        none {}
+      }
+      statement {
+        managed_rule_group_statement {
+          name        = "AWSManagedRulesKnownBadInputsRuleSet"
+          vendor_name = "AWS"
+        }
+      }
+      visibility_config {
+        cloudwatch_metrics_enabled = true
+        metric_name                = "aws-known-bad-inputs"
+        sampled_requests_enabled   = true
+      }
+    }
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "${var.project_name}-waf"
