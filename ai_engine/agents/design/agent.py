@@ -120,7 +120,7 @@ The YAML structure follows these types:
 
 
 def design_node(state: GraphState) -> dict:
-    """LangGraph 노드: RAG 검색 → GPT-4o mini (structured output) → YAML 변환.
+    """LangGraph 노드: RAG 검색 → LLM (structured output) → YAML 변환.
 
     검증 에이전트가 아키텍처 문제로 되돌려 보낸 경우(feedback 존재)에는
     이전 YAML과 검증 피드백을 함께 전달해 설계를 수정하도록 한다.
@@ -167,7 +167,7 @@ def design_node(state: GraphState) -> dict:
         HumanMessage(content=human_content),
     ]
 
-    print("[설계 에이전트] GPT-4o mini 호출 중...")
+    print(f"[설계 에이전트] {llm.model_name} 호출 중...")
     try:
         spec: ArchitectureSpec = structured_llm.invoke(messages)
     except RateLimitError as e:
