@@ -29,7 +29,10 @@ VPC usage rules:
    Adding Lambda to a VPC without a NAT Gateway or VPC Endpoint will BREAK connectivity to these services.
 
 Subnet assignment rules:
-6. load_balancer.subnets must contain 2+ PUBLIC subnet names in different AZs (ALB requires multi-AZ).
+6. load_balancer.subnets must contain 2+ subnet names in different AZs (ALB requires multi-AZ).
+   - Internet-facing service: internal=false + PUBLIC subnets.
+   - Internal-only service (사내망/VPN/전용선 접근, "내부 직원만", "외부 노출 금지"):
+     ALWAYS set internal=true + PRIVATE subnets. NEVER place an internal ALB in public subnets.
 7. compute.subnets for EKS/ECS must contain 2+ PRIVATE subnet names in different AZs for high availability.
    NEVER place ECS/EKS/Fargate in a public subnet. Only ALB and NAT Gateway belong in public subnets.
 8. compute.subnets for EC2/Lambda can be a single subnet.
@@ -117,7 +120,7 @@ The YAML structure follows these types:
 
 
 def design_node(state: GraphState) -> dict:
-    """LangGraph 노드: RAG 검색 → GPT-4o mini (structured output) → YAML 변환.
+    """LangGraph 노드: RAG 검색 → LLM (structured output) → YAML 변환.
 
     검증 에이전트가 아키텍처 문제로 되돌려 보낸 경우(feedback 존재)에는
     이전 YAML과 검증 피드백을 함께 전달해 설계를 수정하도록 한다.
@@ -164,7 +167,7 @@ def design_node(state: GraphState) -> dict:
         HumanMessage(content=human_content),
     ]
 
-    print("[설계 에이전트] GPT-4o mini 호출 중...")
+    print(f"[설계 에이전트] {llm.model_name} 호출 중...")
     try:
         spec: ArchitectureSpec = structured_llm.invoke(messages)
     except RateLimitError as e:

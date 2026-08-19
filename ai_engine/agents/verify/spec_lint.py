@@ -64,30 +64,40 @@ def lint_spec(yaml_output: str) -> List[dict]:
                     "ECS/EKS/Fargate는 프라이빗 서브넷에 배치하고 ALB를 통해 트래픽을 받으세요.",
                 ))
 
-    # 규칙 3: ALB는 서로 다른 AZ의 퍼블릭 서브넷 2개 이상
+    # 규칙 3: ALB는 서로 다른 AZ의 서브넷 2개 이상 —
+    # 인터넷 연결형(internal=false)은 퍼블릭, 사내 전용(internal=true)은 프라이빗 서브넷
     for lb in arch.get("load_balancer") or []:
         if not isinstance(lb, dict):
             continue
         sns = lb.get("subnets") or []
         name = lb.get("name")
+        is_internal = lb.get("internal", False)
         if len(sns) < 2:
             issues.append(_issue(
                 f"로드밸런서 '{name}'의 서브넷이 {len(sns)}개뿐입니다. ALB는 서로 다른 AZ의 서브넷 2개 이상이 필수입니다.",
-                "서로 다른 AZ의 퍼블릭 서브넷을 2개 이상 지정하세요.",
+                "서로 다른 AZ의 서브넷을 2개 이상 지정하세요.",
             ))
         else:
             azs = {subnet_az.get(sn) for sn in sns if subnet_az.get(sn)}
             if len(azs) < 2:
                 issues.append(_issue(
                     f"로드밸런서 '{name}'의 서브넷들이 같은 AZ에 있습니다. ALB는 다중 AZ가 필수입니다.",
-                    "서로 다른 AZ에 있는 퍼블릭 서브넷들을 지정하세요.",
+                    "서로 다른 AZ에 있는 서브넷들을 지정하세요.",
                 ))
-            private_sns = [sn for sn in sns if subnet_type.get(sn) == "private"]
-            if private_sns:
-                issues.append(_issue(
-                    f"인터넷 연결 로드밸런서 '{name}'가 프라이빗 서브넷({', '.join(private_sns)})에 배치되었습니다.",
-                    "ALB는 퍼블릭 서브넷에 배치하세요.",
-                ))
+            if is_internal:
+                public_sns = [sn for sn in sns if subnet_type.get(sn) == "public"]
+                if public_sns:
+                    issues.append(_issue(
+                        f"사내 전용(internal) 로드밸런서 '{name}'가 퍼블릭 서브넷({', '.join(public_sns)})에 배치되었습니다.",
+                        "internal 로드밸런서는 프라이빗 서브넷에 배치하세요.",
+                    ))
+            else:
+                private_sns = [sn for sn in sns if subnet_type.get(sn) == "private"]
+                if private_sns:
+                    issues.append(_issue(
+                        f"인터넷 연결 로드밸런서 '{name}'가 프라이빗 서브넷({', '.join(private_sns)})에 배치되었습니다.",
+                        "인터넷 연결 ALB는 퍼블릭 서브넷에 배치하거나, 사내 전용이면 internal: true로 설정하세요.",
+                    ))
 
     # 규칙 4: NAT Gateway는 퍼블릭 서브넷에만
     networking = arch.get("networking") or {}

@@ -64,7 +64,11 @@ class ApiGateway(BaseModel):
 class LoadBalancer(BaseModel):
     type: Literal["ALB", "NLB"] = "ALB"
     name: str
-    subnets: List[str] = Field(description="List of public subnet names. ALB requires 2+ subnets in different AZs.")
+    internal: bool = Field(
+        default=False,
+        description="true for internal-only load balancers (corporate network access via VPN/Direct Connect). Internal LBs go in PRIVATE subnets; internet-facing LBs go in PUBLIC subnets."
+    )
+    subnets: List[str] = Field(description="2+ subnet names in different AZs. PUBLIC subnets when internal=false, PRIVATE subnets when internal=true.")
 
 
 class Database(BaseModel):

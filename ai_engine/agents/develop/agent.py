@@ -67,7 +67,7 @@ def develop_node(state: GraphState) -> dict:
         HumanMessage(content=human_content),
     ]
 
-    print("[개발 에이전트] Terraform 코드 생성 중...")
+    print(f"[개발 에이전트] Terraform 코드 생성 중... ({llm.model_name})")
     try:
         tf: TerraformFiles = structured_llm.invoke(messages)
     except RateLimitError as e:
