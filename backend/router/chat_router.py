@@ -42,6 +42,7 @@ def handle_chat(
         image_url=base64_image,
         terraform_code=design_result.terraform_files,
         validation_summary=design_result.validation_summary,
+        cost_estimate=design_result.cost_estimate,
     )
     db.add(chat_history)
     db.commit()
@@ -54,6 +55,7 @@ def handle_chat(
         "message": chat_history.response_message,
         "terraform_code": chat_history.terraform_code,
         "validation_summary": chat_history.validation_summary,
+        "cost_estimate": chat_history.cost_estimate,
     }
 
 
