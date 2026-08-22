@@ -12,6 +12,7 @@ class ChatResponse(BaseModel):
     image_url: str
     message: str
     terraform_code: Optional[dict] = None
+    validation_summary: Optional[str] = None
 
 
 class ChatHistoryItemResponse(BaseModel):
@@ -29,6 +30,7 @@ class ChatHistoryResponse(BaseModel):
     response_message: str
     image_url: Optional[str]
     terraform_code: Optional[dict] = None
+    validation_summary: Optional[str] = None
     created_at: datetime
 
     class Config:

@@ -13,6 +13,7 @@ class ChatHistory(Base):
     response_message = Column(Text, nullable=False)
     image_url = Column(String, nullable=True)
     terraform_code = Column(JSON, nullable=True)
+    validation_summary = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
 
 
