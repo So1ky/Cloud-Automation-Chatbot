@@ -14,7 +14,14 @@ logger = logging.getLogger(__name__)
 
 password_hash = PasswordHash.recommended()
 
-SECRET_KEY = os.getenv("SECRET_KEY")  
+# JWT 서명 키. 반드시 .env의 SECRET_KEY로 설정해야 한다.
+# 미설정 시 임시 키로 넘어가지 않고, 시작 시점에 명확한 에러로 즉시 실패한다.
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY 환경변수가 설정되지 않았습니다. .env에 SECRET_KEY를 설정하세요 "
+        '(예: python -c "import secrets; print(secrets.token_urlsafe(48))").'
+    )
 
 def create_user(db: Session, user_create: UserCreate):
     db_user = User(
