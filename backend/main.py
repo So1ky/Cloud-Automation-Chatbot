@@ -10,7 +10,7 @@ import logging
 import os
 
 from backend.router import chat_router, user_router
-from backend.database.config import Base, engine
+from backend.database.config import engine
 from backend.database import models
 from ai_engine.rag.knowledge_base import load_knowledge_base
 
@@ -19,11 +19,36 @@ from ai_engine.rag.knowledge_base import load_knowledge_base
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
+
+
+def run_migrations() -> None:
+    """Alembic 마이그레이션을 head까지 적용한다.
+
+    - 새 DB: upgrade가 전체 스키마를 생성
+    - 기존(pre-alembic) DB: 이미 테이블이 있고 alembic_version이 없으면 stamp로 채택
+      (create_all로 만들어졌던 기존 개발 DB를 깨지 않고 alembic 관리로 편입)
+    """
+    from alembic.config import Config
+    from alembic import command
+    from sqlalchemy import inspect
+
+    cfg = Config(os.path.join(ROOT_DIR, "alembic.ini"))
+    cfg.set_main_option("script_location", os.path.join(ROOT_DIR, "migrations"))
+
+    tables = set(inspect(engine).get_table_names())
+    if "alembic_version" not in tables and "user" in tables:
+        logger.info("기존 DB 감지 — 현재 스키마를 alembic head로 stamp")
+        command.stamp(cfg, "head")
+    else:
+        command.upgrade(cfg, "head")
+
 
 # ─── 시작 시 ChromaDB 미리 로드 (첫 요청 지연 방지) ─────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    run_migrations()
 
     try:
         logger.info("ChromaDB warming up...")
