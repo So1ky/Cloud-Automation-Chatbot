@@ -10,6 +10,7 @@ interface Message {
   text: string;
   imageUrl?: string;
   terraformCode?: Record<string, string>;
+  validationSummary?: string;
   timestamp: Date;
 }
 
@@ -23,6 +24,7 @@ interface ChatHistoryDetail extends ChatHistoryItem {
   response_message: string;
   image_url?: string | null;
   terraform_code?: Record<string, string> | null;
+  validation_summary?: string | null;
 }
 
 const initialMessage = (): Message => ({
@@ -110,6 +112,7 @@ export default function Home() {
           text: chat.response_message,
           imageUrl: chat.image_url || undefined,
           terraformCode: chat.terraform_code || undefined,
+          validationSummary: chat.validation_summary || undefined,
           timestamp,
         },
       ]);
@@ -171,6 +174,7 @@ export default function Home() {
         text: data.message || "생성이 완료되었습니다.",
         imageUrl: data.image_url,
         terraformCode: data.terraform_code || undefined,
+        validationSummary: data.validation_summary || undefined,
         timestamp: new Date(),
       };
 
