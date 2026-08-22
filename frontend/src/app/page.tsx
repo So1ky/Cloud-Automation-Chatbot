@@ -143,8 +143,21 @@ export default function Home() {
       .then(() => setHealthStatus("ok"))
       .catch(() => setHealthStatus("error"));
 
+    // 소셜 로그인 콜백 실패 시 안내 (?auth_error=...) 후 URL 정리
+    const params = new URLSearchParams(window.location.search);
+    const authError = params.get("auth_error");
+    if (authError) {
+      pushToast(
+        authError === "email"
+          ? "소셜 계정에서 이메일을 가져오지 못했습니다. 이메일 공개 설정을 확인해 주세요."
+          : "소셜 로그인에 실패했습니다. 다시 시도해 주세요.",
+      );
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+
     // Check Auth Token
     fetchUserInfo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 실제 요구사항 전송 (신규 전송 + 재시도 공용)
