@@ -364,6 +364,23 @@ export default function AuthModal({
             Google로 계속하기
           </button>
 
+          {/* 소셜 로그인 (Kakao) */}
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = `${API_BASE}/api/user/oauth/kakao/login`;
+            }}
+            className="mt-2.5 flex w-full items-center justify-center gap-2.5 rounded-xl border border-[#FEE500] bg-[#FEE500] py-3 text-sm font-bold text-[#191600] shadow-sm transition-all hover:brightness-95 active:scale-[0.98]"
+          >
+            <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="#191600"
+                d="M12 3C6.9 3 3 6.24 3 10.2c0 2.53 1.68 4.75 4.2 6.02-.18.65-.67 2.42-.77 2.8-.12.47.17.47.36.34.15-.1 2.36-1.6 3.32-2.26.6.09 1.23.14 1.89.14 5.1 0 9-3.24 9-7.2S17.1 3 12 3z"
+              />
+            </svg>
+            카카오로 계속하기
+          </button>
+
           <div className="text-center mt-3">
             <button
               type="button"
