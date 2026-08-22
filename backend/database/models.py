@@ -14,6 +14,7 @@ class ChatHistory(Base):
     image_url = Column(String, nullable=True)
     terraform_code = Column(JSON, nullable=True)
     validation_summary = Column(Text, nullable=True)
+    cost_estimate = Column(JSON, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
 
 

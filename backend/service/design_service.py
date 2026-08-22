@@ -25,6 +25,7 @@ def design(req: DesignRequest) -> DesignResponse:
     yaml_output = result["yaml_output"]
     terraform_files = result["terraform_files"]
     validation_summary = result.get("validation_summary", "")
+    cost_estimate = (result.get("validation_report") or {}).get("cost_estimate")
 
     try:
         parsed = yaml.safe_load(yaml_output)
@@ -45,4 +46,5 @@ def design(req: DesignRequest) -> DesignResponse:
         diagram_yaml=diagram_yaml,
         terraform_files=terraform_files,
         validation_summary=validation_summary,
+        cost_estimate=cost_estimate,
     )
