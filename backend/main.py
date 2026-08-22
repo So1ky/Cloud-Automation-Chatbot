@@ -4,6 +4,7 @@ load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 from contextlib import asynccontextmanager
 import logging
 import os
@@ -44,6 +45,14 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# OAuth state 저장용 세션 미들웨어 (authlib이 사용). SECRET_KEY로 서명.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.environ["SECRET_KEY"],
+    same_site="lax",
+    https_only=False,  # 배포(HTTPS) 시 True 권장
 )
 
 # static 폴더 설정: 이미지 저장 및 서빙용

@@ -33,6 +33,23 @@ def create_user(db: Session, user_create: UserCreate):
     db.refresh(db_user)
     return db_user
 
+def create_oauth_user(db: Session, email: str, provider: str) -> User:
+    """소셜 로그인 유저를 생성한다 (비밀번호 없음)."""
+    db_user = User(email=email, password=None, provider=provider)
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+
+def get_or_create_oauth_user(db: Session, email: str, provider: str) -> User:
+    """이메일로 기존 유저를 찾고, 없으면 소셜 유저로 생성한다."""
+    user = get_user_by_email(db, email)
+    if user:
+        return user
+    return create_oauth_user(db, email, provider)
+
+
 def get_user_by_email(db: Session, email: str) -> User | None:
     return db.query(User).filter(User.email == email).first()
 
@@ -44,6 +61,19 @@ def create_token(payload: dict) -> str:
     payload = payload.copy()
     payload["exp"] = int(time.time()) + 86400 * 7
     return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+
+
+def set_auth_cookie(response, token: str) -> None:
+    """JWT를 httpOnly 쿠키로 심는다 (이메일 로그인·소셜 로그인 공용)."""
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        max_age=86400 * 7,  # 7 days
+        expires=86400 * 7,
+        samesite="lax",
+        secure=False,  # Set to True in HTTPS production
+    )
 
 def verify_token(token: str) -> dict | None:
     try:
