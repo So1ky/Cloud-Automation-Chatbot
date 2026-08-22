@@ -1,6 +1,16 @@
 "use client";
 import React, { useRef, useEffect, useState } from "react";
 
+interface CostEstimate {
+  skipped?: boolean;
+  reason?: string | null;
+  total_monthly_cost?: string | null;
+  currency?: string;
+  potential_yearly_savings?: string | null;
+  resources?: { name: string; monthly_cost: string }[];
+  finops_issues?: { policy: string; message?: string; resources?: string[] }[];
+}
+
 interface Message {
   id: string;
   role: "user" | "bot";
@@ -8,6 +18,7 @@ interface Message {
   imageUrl?: string;
   terraformCode?: Record<string, string>;
   validationSummary?: string;
+  costEstimate?: CostEstimate;
   isError?: boolean;
   timestamp: Date;
 }
@@ -221,6 +232,77 @@ function ValidationSummary({ markdown }: { markdown: string }) {
   );
 }
 
+// "128.40" → "$128.40" (파싱 실패 시 원문 유지)
+function formatUsd(value?: string | null): string | null {
+  if (value == null) return null;
+  const n = Number(value);
+  if (Number.isNaN(n)) return String(value);
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+// Infracost 비용 분석 카드 (skip이거나 총비용이 없으면 렌더하지 않음)
+function CostCard({ cost }: { cost: CostEstimate }) {
+  const total = formatUsd(cost.total_monthly_cost);
+  if (cost.skipped || !total) return null;
+
+  const currency = cost.currency || "USD";
+  const resources = (cost.resources || []).slice(0, 5);
+  const savings = formatUsd(cost.potential_yearly_savings);
+  const finops = cost.finops_issues || [];
+
+  return (
+    <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 shadow-inner">
+      <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-emerald-700">
+        <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path
+            fillRule="evenodd"
+            d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4zM18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1z"
+            clipRule="evenodd"
+          />
+        </svg>
+        예상 비용 (Infracost)
+      </div>
+
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-2xl font-extrabold text-emerald-800">{total}</span>
+        <span className="text-sm font-medium text-emerald-700">/ 월 ({currency})</span>
+      </div>
+
+      {resources.length > 0 && (
+        <ul className="mt-3 space-y-1">
+          {resources.map((r, i) => (
+            <li key={i} className="flex justify-between gap-3 text-[13px] text-slate-700">
+              <span className="truncate">{r.name}</span>
+              <span className="shrink-0 font-semibold text-slate-800">
+                {formatUsd(r.monthly_cost)}/월
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {savings && (
+        <p className="mt-3 text-[13px] font-medium text-emerald-700">
+          💡 예상 절감 가능액: 연 {savings}
+        </p>
+      )}
+
+      {finops.length > 0 && (
+        <div className="mt-3 border-t border-emerald-100 pt-2">
+          <p className="mb-1 text-xs font-bold text-amber-700">FinOps 정책 위반 {finops.length}건</p>
+          <ul className="space-y-0.5">
+            {finops.map((f, i) => (
+              <li key={i} className="text-[13px] text-slate-700">
+                - {f.message || f.policy}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ChatArea({
   messages,
   isLoading,
@@ -382,6 +464,9 @@ export default function ChatArea({
                   {msg.validationSummary && (
                     <ValidationSummary markdown={msg.validationSummary} />
                   )}
+
+                  {/* Infracost 비용 카드 */}
+                  {msg.costEstimate && <CostCard cost={msg.costEstimate} />}
 
                   {/* Terraform 코드 뷰어 출력 */}
                   {msg.terraformCode && (

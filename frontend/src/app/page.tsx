@@ -6,6 +6,16 @@ import AuthModal from "@/components/AuthModal";
 import ToastContainer, { ToastItem, ToastType } from "@/components/Toast";
 import { apiFetch, toUserMessage, ApiError } from "@/lib/api";
 
+export interface CostEstimate {
+  skipped?: boolean;
+  reason?: string | null;
+  total_monthly_cost?: string | null;
+  currency?: string;
+  potential_yearly_savings?: string | null;
+  resources?: { name: string; monthly_cost: string }[];
+  finops_issues?: { policy: string; message?: string; resources?: string[] }[];
+}
+
 interface Message {
   id: string;
   role: "user" | "bot";
@@ -13,6 +23,7 @@ interface Message {
   imageUrl?: string;
   terraformCode?: Record<string, string>;
   validationSummary?: string;
+  costEstimate?: CostEstimate;
   isError?: boolean;
   timestamp: Date;
 }
@@ -28,6 +39,7 @@ interface ChatHistoryDetail extends ChatHistoryItem {
   image_url?: string | null;
   terraform_code?: Record<string, string> | null;
   validation_summary?: string | null;
+  cost_estimate?: CostEstimate | null;
 }
 
 const initialMessage = (): Message => ({
@@ -120,6 +132,7 @@ export default function Home() {
           imageUrl: chat.image_url || undefined,
           terraformCode: chat.terraform_code || undefined,
           validationSummary: chat.validation_summary || undefined,
+          costEstimate: chat.cost_estimate || undefined,
           timestamp,
         },
       ]);
@@ -193,6 +206,7 @@ export default function Home() {
         imageUrl: data.image_url || undefined,
         terraformCode: data.terraform_code || undefined,
         validationSummary: data.validation_summary || undefined,
+        costEstimate: data.cost_estimate || undefined,
         timestamp: new Date(),
       };
 
