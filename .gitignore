@@ -230,3 +230,7 @@ ai_engine/agents/verify/.terraform-plugin-cache/
 
 # e2e 테스트 산출물
 e2e_output/
+
+# frontend 소스의 lib 디렉터리는 무시하지 않음 (위 lib/ 규칙 예외)
+!frontend/src/lib/
+!frontend/src/lib/**
