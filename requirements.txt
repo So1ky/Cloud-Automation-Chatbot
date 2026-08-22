@@ -42,3 +42,4 @@ itsdangerous==2.2.0
 
 # PostgreSQL 드라이버 (DATABASE_URL이 postgresql일 때 사용)
 psycopg2-binary==2.9.12
+alembic==1.19.1
