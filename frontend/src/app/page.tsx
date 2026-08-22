@@ -1,8 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import ChatArea from "@/components/ChatArea";
 import AuthModal from "@/components/AuthModal";
+import ToastContainer, { ToastItem, ToastType } from "@/components/Toast";
+import { apiFetch, toUserMessage, ApiError } from "@/lib/api";
 
 interface Message {
   id: string;
@@ -11,6 +13,7 @@ interface Message {
   imageUrl?: string;
   terraformCode?: Record<string, string>;
   validationSummary?: string;
+  isError?: boolean;
   timestamp: Date;
 }
 
@@ -52,21 +55,32 @@ export default function Home() {
   } | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
+  // Toast 알림
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const toastId = useRef(0);
+  // 마지막 요구사항 (전송 실패 시 재시도용)
+  const lastRequirement = useRef<string>("");
+
+  const dismissToast = (id: number) =>
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+
+  const pushToast = (message: string, type: ToastType = "error") => {
+    const id = ++toastId.current;
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => dismissToast(id), 5000);
+  };
+
   const fetchUserInfo = async () => {
     try {
-      const response = await fetch("http://localhost:8000/api/user/me", {
-        credentials: "include",
-      });
-      if (response.ok) {
-        const user = await response.json();
-        setCurrentUser(user);
-        loadChatHistory();
-      } else {
-        setCurrentUser(null);
-        setChatHistory([]);
-      }
+      const response = await apiFetch("/api/user/me");
+      const user = await response.json();
+      setCurrentUser(user);
+      loadChatHistory();
     } catch (error) {
-      console.error("Failed to fetch user info:", error);
+      // 미로그인(401)은 정상 상황이므로 조용히 처리
+      if (!(error instanceof ApiError && error.status === 401)) {
+        console.error("Failed to fetch user info:", error);
+      }
       setCurrentUser(null);
       setChatHistory([]);
     }
@@ -74,15 +88,12 @@ export default function Home() {
 
   const loadChatHistory = async () => {
     try {
-      const response = await fetch("http://localhost:8000/api/chat/history", {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("채팅 목록 조회 실패");
-
+      const response = await apiFetch("/api/chat/history");
       const history: ChatHistoryItem[] = await response.json();
       setChatHistory(history);
     } catch (error) {
       console.error("Failed to load chat history:", error);
+      pushToast(toUserMessage(error, "채팅 목록을 불러오지 못했습니다."));
     }
   };
 
@@ -90,11 +101,7 @@ export default function Home() {
     setIsHistoryLoading(true);
 
     try {
-      const response = await fetch(`http://localhost:8000/api/chat/${chatId}`, {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("채팅 상세 조회 실패");
-
+      const response = await apiFetch(`/api/chat/${chatId}`);
       const chat: ChatHistoryDetail = await response.json();
       const timestamp = new Date(chat.created_at);
 
@@ -118,6 +125,7 @@ export default function Home() {
       ]);
     } catch (error) {
       console.error("Failed to load chat detail:", error);
+      pushToast(toUserMessage(error, "채팅 내역을 불러오지 못했습니다."));
     } finally {
       setIsHistoryLoading(false);
     }
@@ -131,8 +139,7 @@ export default function Home() {
 
   useEffect(() => {
     // Check Health
-    fetch("http://localhost:8000/api/health")
-      .then((res) => res.json())
+    apiFetch("/api/health", { timeoutMs: 8000 })
       .then(() => setHealthStatus("ok"))
       .catch(() => setHealthStatus("error"));
 
@@ -140,46 +147,44 @@ export default function Home() {
     fetchUserInfo();
   }, []);
 
-  const handleSend = async () => {
-    if (!inputValue.trim() || isLoading) return;
+  // 실제 요구사항 전송 (신규 전송 + 재시도 공용)
+  const sendRequirement = async (requirement: string) => {
+    const text = requirement.trim();
+    if (!text || isLoading) return;
+
+    lastRequirement.current = text;
 
     const userMessage: Message = {
       id: Date.now().toString(),
       role: "user",
-      text: inputValue,
+      text,
       timestamp: new Date(),
     };
 
     setSelectedChatId(null);
     setMessages([userMessage]);
-    setInputValue("");
     setIsLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/api/chat", {
+      const response = await apiFetch("/api/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ requirements: userMessage.text }),
-        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requirements: text }),
       });
-
-      if (!response.ok) throw new Error("서버 응답 오류");
 
       const data = await response.json();
       const botMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "bot",
         text: data.message || "생성이 완료되었습니다.",
-        imageUrl: data.image_url,
+        imageUrl: data.image_url || undefined,
         terraformCode: data.terraform_code || undefined,
         validationSummary: data.validation_summary || undefined,
         timestamp: new Date(),
       };
 
       setMessages([userMessage, botMessage]);
-      setSelectedChatId(data.chat_id);
+      if (typeof data.chat_id === "number") setSelectedChatId(data.chat_id);
 
       if (currentUser) {
         await loadChatHistory();
@@ -189,13 +194,25 @@ export default function Home() {
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "bot",
-        text: "죄송합니다. 오류가 발생했습니다. 백엔드 서버가 실행 중인지 확인해 주세요.",
+        text: toUserMessage(error, "생성 중 오류가 발생했습니다."),
+        isError: true,
         timestamp: new Date(),
       };
       setMessages([userMessage, errorMessage]);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSend = async () => {
+    if (!inputValue.trim() || isLoading) return;
+    const text = inputValue;
+    setInputValue("");
+    await sendRequirement(text);
+  };
+
+  const handleRetry = () => {
+    if (lastRequirement.current) sendRequirement(lastRequirement.current);
   };
 
   const handleLoginSuccess = (emailStr: string) => {
@@ -205,12 +222,10 @@ export default function Home() {
 
   const handleLogout = async () => {
     try {
-      await fetch("http://localhost:8000/api/user/logout", {
-        method: "POST",
-        credentials: "include",
-      });
+      await apiFetch("/api/user/logout", { method: "POST" });
     } catch (error) {
       console.error("Failed to logout on backend:", error);
+      pushToast(toUserMessage(error, "로그아웃 처리 중 문제가 발생했습니다."));
     }
     setCurrentUser(null);
     setChatHistory([]);
@@ -239,6 +254,7 @@ export default function Home() {
         inputValue={inputValue}
         setInputValue={setInputValue}
         onSend={handleSend}
+        onRetry={handleRetry}
         onStartNewChat={startNewChat}
         onOpenAuth={() => setIsAuthModalOpen(true)}
         currentUser={currentUser}
@@ -250,6 +266,9 @@ export default function Home() {
         onClose={() => setIsAuthModalOpen(false)}
         onLoginSuccess={handleLoginSuccess}
       />
+
+      {/* Toast 알림 */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </main>
   );
 }
