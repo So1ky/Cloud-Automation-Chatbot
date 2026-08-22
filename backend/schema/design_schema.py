@@ -9,3 +9,4 @@ class DesignResponse(BaseModel):
     yaml_output: str   # 우리 YAML 명세 (Terraform 생성용)
     diagram_yaml: str  # awsdac 전용 YAML (다이어그램 생성용)
     terraform_files: Dict[str, str]
+    validation_summary: str = ""  # 검증 결과 사용자 설명문 (마크다운)

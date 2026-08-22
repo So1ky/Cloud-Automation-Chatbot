@@ -41,6 +41,7 @@ def handle_chat(
         response_message="성공적으로 생성되었습니다.",
         image_url=base64_image,
         terraform_code=design_result.terraform_files,
+        validation_summary=design_result.validation_summary,
     )
     db.add(chat_history)
     db.commit()
@@ -52,6 +53,7 @@ def handle_chat(
         "image_url": chat_history.image_url,
         "message": chat_history.response_message,
         "terraform_code": chat_history.terraform_code,
+        "validation_summary": chat_history.validation_summary,
     }
 
 
