@@ -53,6 +53,8 @@ oauth.register(
 )
 
 # Kakao — OAuth2. client_id는 REST API 키, client_secret은 선택(보안 설정에서 활성화 시).
+# 카카오는 클라이언트 인증 정보를 요청 본문(body)으로 받으므로 client_secret_post 사용
+# (authlib 기본값 client_secret_basic은 Basic 헤더로 보내 카카오에서 401 발생).
 oauth.register(
     name="kakao",
     client_id=os.getenv("KAKAO_CLIENT_ID"),
@@ -60,7 +62,10 @@ oauth.register(
     access_token_url="https://kauth.kakao.com/oauth/token",
     authorize_url="https://kauth.kakao.com/oauth/authorize",
     api_base_url="https://kapi.kakao.com/",
-    client_kwargs={"scope": "account_email"},
+    client_kwargs={
+        "scope": "account_email",
+        "token_endpoint_auth_method": "client_secret_post",
+    },
 )
 
 
