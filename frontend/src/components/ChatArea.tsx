@@ -7,6 +7,7 @@ interface Message {
   text: string;
   imageUrl?: string;
   terraformCode?: Record<string, string>;
+  validationSummary?: string;
   timestamp: Date;
 }
 
@@ -117,6 +118,103 @@ function TerraformViewer({ files }: TerraformViewerProps) {
           {files[activeTab]}
         </pre>
       </div>
+    </div>
+  );
+}
+
+// **굵게** 인라인 마크다운을 React 노드로 변환
+function renderInline(text: string): React.ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return (
+        <strong key={i} className="font-semibold text-slate-900">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    return <React.Fragment key={i}>{part}</React.Fragment>;
+  });
+}
+
+// 검증 설명문(validation_summary) 렌더러
+// report.py가 생성하는 마크다운 부분집합(## 제목, - 목록, **굵게**, 문단)을 렌더한다.
+function ValidationSummary({ markdown }: { markdown: string }) {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const blocks: React.ReactNode[] = [];
+  let listItems: { indent: number; text: string }[] = [];
+
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    const items = [...listItems];
+    listItems = [];
+    blocks.push(
+      <ul key={`ul-${blocks.length}`} className="space-y-1">
+        {items.map((it, i) => (
+          <li
+            key={i}
+            className="flex gap-2 text-[14px] text-slate-700"
+            style={{ marginLeft: it.indent * 16 }}
+          >
+            <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-400" />
+            <span>{renderInline(it.text)}</span>
+          </li>
+        ))}
+      </ul>,
+    );
+  };
+
+  lines.forEach((raw) => {
+    const line = raw.trimEnd();
+    if (!line.trim()) {
+      flushList();
+      return;
+    }
+    const heading = line.match(/^(#{1,3})\s+(.*)$/);
+    if (heading) {
+      flushList();
+      blocks.push(
+        <h4
+          key={`h-${blocks.length}`}
+          className="mt-3 mb-1 text-sm font-bold text-slate-800"
+        >
+          {renderInline(heading[2])}
+        </h4>,
+      );
+      return;
+    }
+    const bullet = line.match(/^(\s*)[-*]\s+(.*)$/);
+    if (bullet) {
+      const indent = Math.floor(bullet[1].replace(/\t/g, "  ").length / 2);
+      listItems.push({ indent, text: bullet[2] });
+      return;
+    }
+    flushList();
+    blocks.push(
+      <p key={`p-${blocks.length}`} className="text-[14px] text-slate-700">
+        {renderInline(line)}
+      </p>,
+    );
+  });
+  flushList();
+
+  return (
+    <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/60 p-4 shadow-inner">
+      <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-blue-700">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          className="h-4 w-4"
+          viewBox="0 0 20 20"
+          fill="currentColor"
+        >
+          <path
+            fillRule="evenodd"
+            d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+            clipRule="evenodd"
+          />
+        </svg>
+        검증 결과 안내
+      </div>
+      <div className="space-y-1">{blocks}</div>
     </div>
   );
 }
@@ -248,6 +346,11 @@ export default function ChatArea({
                         </button>
                       </div>
                     </div>
+                  )}
+
+                  {/* 검증 설명문(validation_summary) 출력 */}
+                  {msg.validationSummary && (
+                    <ValidationSummary markdown={msg.validationSummary} />
                   )}
 
                   {/* Terraform 코드 뷰어 출력 */}
