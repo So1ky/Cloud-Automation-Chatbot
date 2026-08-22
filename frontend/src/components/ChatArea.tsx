@@ -389,6 +389,7 @@ export default function ChatArea({
                   )}
 
                   <span
+                    suppressHydrationWarning
                     className={`mt-2 block text-[10px] tracking-wide uppercase opacity-70 ${
                       msg.role === "user"
                         ? "text-right text-blue-100"
