@@ -12,7 +12,7 @@ import os
 from backend.router import chat_router, user_router
 from backend.database.config import engine
 from backend.database import models
-from ai_engine.rag.knowledge_base import load_knowledge_base
+from ai_engine.rag.knowledge_base import warmup_search_stack
 
 
 # 로깅 설정 (에러 확인용)
@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
 
     try:
         logger.info("ChromaDB warming up...")
-        load_knowledge_base()
+        warmup_search_stack()
         logger.info("AI engine ready")
     except Exception as e:
         logger.warning(f"AI engine warmup skipped: {e}")

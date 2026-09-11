@@ -189,6 +189,18 @@ def rerank_documents(query: str, docs: list, top_k: int = 5) -> list:
     return [doc for _, doc in scored[:top_k]]
 
 
+def warmup_search_stack() -> None:
+    """서버 시작 시 호출: ChromaDB + BM25 인덱스 + 리랭커를 미리 로드한다.
+
+    호출하지 않으면 이 비용(1~2분)이 첫 사용자 요청에 청구되어
+    프론트엔드 타임아웃(3분)을 초과할 수 있다.
+    """
+    load_knowledge_base()
+    _get_bm25_retriever()
+    _get_reranker()
+    print("[RAG] 검색 스택 웜업 완료 (ChromaDB + BM25 + Reranker)")
+
+
 # ─── LLM 쿼리 확장 (번역 + Multi-query 1회 통합 호출) ────────────────────────
 
 class _QueryExpansion(BaseModel):
