@@ -3,6 +3,7 @@ import React from "react";
 
 interface ChatHistoryItem {
   id: number;
+  conversation_id: number;
   requirements: string;
   created_at: string;
 }
@@ -10,8 +11,8 @@ interface ChatHistoryItem {
 interface SidebarProps {
   currentUser: { id: number; email: string } | null;
   chatHistory: ChatHistoryItem[];
-  selectedChatId: number | null;
-  onSelectChat: (id: number) => void;
+  selectedConversationId: number | null;
+  onSelectChat: (conversationId: number) => void;
   onStartNewChat: () => void;
   onLogout: () => void;
   onOpenAuth: () => void;
@@ -20,7 +21,7 @@ interface SidebarProps {
 export default function Sidebar({
   currentUser,
   chatHistory,
-  selectedChatId,
+  selectedConversationId,
   onSelectChat,
   onStartNewChat,
   onLogout,
@@ -68,9 +69,9 @@ export default function Sidebar({
               {chatHistory.map((chat) => (
                 <button
                   key={chat.id}
-                  onClick={() => onSelectChat(chat.id)}
+                  onClick={() => onSelectChat(chat.conversation_id)}
                   className={`w-full rounded-xl px-4 py-3 text-left transition-all ${
-                    selectedChatId === chat.id
+                    selectedConversationId === chat.conversation_id
                       ? "bg-blue-50 text-blue-700 border-l-4 border-blue-600 shadow-sm"
                       : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                   }`}

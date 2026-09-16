@@ -9,12 +9,16 @@ class ChatHistory(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("user.id"), nullable=True)
+    # 대화 묶음 ID (첫 턴의 id와 동일, 후속 턴은 첫 턴의 값을 상속)
+    conversation_id = Column(Integer, nullable=True, index=True)
     requirements = Column(Text, nullable=False)
     response_message = Column(Text, nullable=False)
     image_url = Column(String, nullable=True)
     terraform_code = Column(JSON, nullable=True)
     validation_summary = Column(Text, nullable=True)
     cost_estimate = Column(JSON, nullable=True)
+    # 이 턴에서 확정된 아키텍처 YAML (다음 턴의 previous_yaml로 사용)
+    yaml_output = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
 
 

@@ -30,7 +30,11 @@ SUMMARY_PROMPT = """당신은 클라우드 인프라 컨설턴트입니다. AI�
 5. verify_attempts가 2 이상일 때만 "AI가 검증 과정에서 발견된 문제를 자동으로 수정했다"는
    취지를 한 문장으로 언급하세요. verify_attempts가 1이면 자동 수정 이야기를 아예 하지 마세요.
 6. 과장하거나 겁주지 말 것. 사실에 없는 내용을 지어내지 말 것.
-7. 제공된 JSON에 없는 정보는 쓰지 말 것."""
+7. 제공된 JSON에 없는 정보는 쓰지 말 것.
+8. "이전 설계 YAML"과 "이번 설계 YAML"이 함께 제공되면(수정 요청 턴), 글 맨 앞에
+   "## 변경 사항" 섹션을 두고 두 YAML을 비교해 실제로 바뀐 점만 2~4개 불릿으로 쓰세요
+   (추가/제거/교체된 서비스와 그로 인한 부수 정리 사항). 바뀌지 않은 부분은 나열하지 마세요.
+   이전 설계가 제공되지 않으면 이 섹션을 만들지 마세요."""
 
 
 def _digest(report: dict, passed: bool) -> dict:
@@ -98,18 +102,34 @@ def _fallback_summary(digest: dict) -> str:
     return "\n".join(lines)
 
 
-def generate_user_summary(validation_report: dict, validation_passed: bool) -> str:
-    """검증 리포트를 사용자용 한국어 설명문(마크다운)으로 변환한다."""
+def generate_user_summary(
+    validation_report: dict,
+    validation_passed: bool,
+    previous_yaml: str | None = None,
+    yaml_output: str | None = None,
+) -> str:
+    """검증 리포트를 사용자용 한국어 설명문(마크다운)으로 변환한다.
+
+    previous_yaml이 있으면(멀티턴 수정 턴) 이전/이번 설계 YAML을 함께 넘겨
+    설명문 맨 앞에 "## 변경 사항" 섹션을 생성하게 한다.
+    """
     digest = _digest(validation_report or {}, validation_passed)
+
+    human_content = (
+        "다음 검증 결과 JSON을 바탕으로 사용자에게 전달할 설명문을 작성하세요.\n\n"
+        f"```json\n{json.dumps(digest, ensure_ascii=False, indent=2)}\n```"
+    )
+    if previous_yaml and yaml_output:
+        human_content += (
+            f"\n\n## 이전 설계 YAML\n\n```yaml\n{previous_yaml}\n```\n\n"
+            f"## 이번 설계 YAML\n\n```yaml\n{yaml_output}\n```"
+        )
 
     try:
         llm = get_llm("report")
         response = llm.invoke([
             SystemMessage(content=SUMMARY_PROMPT),
-            HumanMessage(content=(
-                "다음 검증 결과 JSON을 바탕으로 사용자에게 전달할 설명문을 작성하세요.\n\n"
-                f"```json\n{json.dumps(digest, ensure_ascii=False, indent=2)}\n```"
-            )),
+            HumanMessage(content=human_content),
         ])
         text = (response.content or "").strip()
         if text:

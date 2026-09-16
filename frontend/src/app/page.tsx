@@ -30,11 +30,13 @@ interface Message {
 
 interface ChatHistoryItem {
   id: number;
+  conversation_id: number;
   requirements: string;
   created_at: string;
 }
 
-interface ChatHistoryDetail extends ChatHistoryItem {
+// GET /api/chat/conversation/{id} 응답의 개별 턴
+interface ConversationTurn extends ChatHistoryItem {
   response_message: string;
   image_url?: string | null;
   terraform_code?: Record<string, string> | null;
@@ -52,7 +54,10 @@ const initialMessage = (): Message => ({
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([initialMessage()]);
   const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
-  const [selectedChatId, setSelectedChatId] = useState<number | null>(null);
+  // 현재 진행 중(= 사이드바에서 선택된) 대화 ID. null이면 새 대화
+  const [selectedConversationId, setSelectedConversationId] = useState<
+    number | null
+  >(null);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
@@ -109,35 +114,40 @@ export default function Home() {
     }
   };
 
-  const loadChatDetail = async (chatId: number) => {
+  const loadConversation = async (conversationId: number) => {
     setIsHistoryLoading(true);
 
     try {
-      const response = await apiFetch(`/api/chat/${chatId}`);
-      const chat: ChatHistoryDetail = await response.json();
-      const timestamp = new Date(chat.created_at);
+      const response = await apiFetch(`/api/chat/conversation/${conversationId}`);
+      const turns: ConversationTurn[] = await response.json();
 
-      setSelectedChatId(chat.id);
-      setMessages([
-        {
-          id: `${chat.id}-user`,
-          role: "user",
-          text: chat.requirements,
-          timestamp,
-        },
-        {
-          id: `${chat.id}-bot`,
-          role: "bot",
-          text: chat.response_message,
-          imageUrl: chat.image_url || undefined,
-          terraformCode: chat.terraform_code || undefined,
-          validationSummary: chat.validation_summary || undefined,
-          costEstimate: chat.cost_estimate || undefined,
-          timestamp,
-        },
-      ]);
+      setSelectedConversationId(conversationId);
+      // 턴 배열(시간순) → user/bot 메시지 쌍으로 전개해 전체 대화를 복원
+      setMessages(
+        turns.flatMap((turn) => {
+          const timestamp = new Date(turn.created_at);
+          return [
+            {
+              id: `${turn.id}-user`,
+              role: "user" as const,
+              text: turn.requirements,
+              timestamp,
+            },
+            {
+              id: `${turn.id}-bot`,
+              role: "bot" as const,
+              text: turn.response_message,
+              imageUrl: turn.image_url || undefined,
+              terraformCode: turn.terraform_code || undefined,
+              validationSummary: turn.validation_summary || undefined,
+              costEstimate: turn.cost_estimate || undefined,
+              timestamp,
+            },
+          ];
+        }),
+      );
     } catch (error) {
-      console.error("Failed to load chat detail:", error);
+      console.error("Failed to load conversation:", error);
       pushToast(toUserMessage(error, "채팅 내역을 불러오지 못했습니다."));
     } finally {
       setIsHistoryLoading(false);
@@ -145,7 +155,7 @@ export default function Home() {
   };
 
   const startNewChat = () => {
-    setSelectedChatId(null);
+    setSelectedConversationId(null);
     setMessages([initialMessage()]);
     setInputValue("");
   };
@@ -168,7 +178,8 @@ export default function Home() {
       window.history.replaceState({}, "", window.location.pathname);
     }
 
-    // Check Auth Token
+    // Check Auth Token (setState는 네트워크 응답 후 실행되므로 동기 재렌더 없음)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchUserInfo();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -187,15 +198,18 @@ export default function Home() {
       timestamp: new Date(),
     };
 
-    setSelectedChatId(null);
-    setMessages([userMessage]);
+    // 멀티턴: 대화를 리셋하지 않고 이어붙인다
+    setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
 
     try {
       const response = await apiFetch("/api/chat/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requirements: text }),
+        body: JSON.stringify({
+          requirements: text,
+          conversation_id: selectedConversationId,
+        }),
       });
 
       const data = await response.json();
@@ -210,8 +224,9 @@ export default function Home() {
         timestamp: new Date(),
       };
 
-      setMessages([userMessage, botMessage]);
-      if (typeof data.chat_id === "number") setSelectedChatId(data.chat_id);
+      setMessages((prev) => [...prev, botMessage]);
+      if (typeof data.conversation_id === "number")
+        setSelectedConversationId(data.conversation_id);
 
       if (currentUser) {
         await loadChatHistory();
@@ -225,7 +240,8 @@ export default function Home() {
         isError: true,
         timestamp: new Date(),
       };
-      setMessages([userMessage, errorMessage]);
+      // 실패해도 대화 유지 — conversationId가 남아 있어 재시도 시 같은 대화로 재전송
+      setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
     }
@@ -265,8 +281,8 @@ export default function Home() {
       <Sidebar
         currentUser={currentUser}
         chatHistory={chatHistory}
-        selectedChatId={selectedChatId}
-        onSelectChat={loadChatDetail}
+        selectedConversationId={selectedConversationId}
+        onSelectChat={loadConversation}
         onStartNewChat={startNewChat}
         onLogout={handleLogout}
         onOpenAuth={() => setIsAuthModalOpen(true)}

@@ -513,16 +513,19 @@ export default function ChatArea({
         </div>
       </div>
 
-      {/* Input Footer Area */}
-      {!messages.some((msg) => msg.role === "user") ? (
-        <div className="border-t border-slate-200 bg-white p-5">
+      {/* Input Footer Area — 멀티턴: 항상 표시해 후속 수정 요청을 받는다 */}
+      <div className="border-t border-slate-200 bg-white p-5">
           <div className="mx-auto flex max-w-4xl gap-4 items-center">
             <input
               type="text"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && onSend()}
-              placeholder="예: 3티어 웹 어플리케이션 아키텍처 그려줘"
+              placeholder={
+                messages.some((msg) => msg.role === "user")
+                  ? "예: RDS를 Aurora로 바꿔줘"
+                  : "예: 3티어 웹 어플리케이션 아키텍처 그려줘"
+              }
               className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-[15px] shadow-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:bg-slate-50 disabled:text-slate-400"
               disabled={isLoading}
             />
@@ -534,8 +537,7 @@ export default function ChatArea({
               다이어그램 생성
             </button>
           </div>
-        </div>
-      ) : null}
+      </div>
     </section>
   );
 }
