@@ -38,6 +38,15 @@ Generate exactly 4 Terraform files:
 8. DynamoDB: use billing_mode = "PAY_PER_REQUEST" unless spec says otherwise
 9. For ECS: always create aws_ecs_cluster, aws_ecs_task_definition, aws_ecs_service together
 10. For RDS: always create aws_db_subnet_group before aws_db_instance
+11. NEVER write single-line blocks containing multiple arguments or nested blocks —
+    HCL rejects them and terraform init fails. Always expand every block across multiple lines:
+    - WRONG: attribute { name = "EmployeeId" type = "S" }
+    - WRONG: default_action { allow {} }
+    - RIGHT:
+      attribute {
+        name = "EmployeeId"
+        type = "S"
+      }
 
 ## S3 Versioning Rule (AWS Provider v5)
 - NEVER use the versioning{} block inside aws_s3_bucket — it is deprecated in AWS provider v5
