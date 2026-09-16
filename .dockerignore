@@ -1,0 +1,20 @@
+# backend 이미지 빌드 컨텍스트(저장소 루트)에서 제외할 것들
+.git
+.venv
+.env
+frontend/
+docs/
+e2e_output/
+backend/database/*.db
+backend/database/*.db.bak*
+backend/static/
+# RAG 자산은 이미지가 아니라 볼륨(NFS/EFS)으로 공급
+ai_engine/rag/chroma_db/
+ai_engine/docs/
+# terraform 플러그인 캐시 (1.4GB, 런타임 emptyDir로 대체)
+ai_engine/agents/verify/.terraform-plugin-cache/
+__pycache__/
+**/__pycache__/
+*.pyc
+deploy/
+CLAUDE.md

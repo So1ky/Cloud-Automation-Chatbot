@@ -1,7 +1,8 @@
 // 백엔드 호출 공통 헬퍼: 타임아웃(AbortController) + 에러 정규화(네트워크/타임아웃/HTTP).
 // 모든 fetch를 이 헬퍼로 통일해 일관된 에러 처리를 제공한다.
 
-export const API_BASE = "http://localhost:8000";
+// 배포 빌드에서는 NEXT_PUBLIC_API_BASE=""(동일 오리진 상대경로)로 주입, 로컬 dev는 기본값 사용
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
 export type ApiErrorKind = "network" | "timeout" | "http";
 

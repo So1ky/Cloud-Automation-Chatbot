@@ -1,0 +1,14 @@
+# 폴백: NFS 마운트가 실패하는 환경에서 nfs.yaml 대신 적용 (PVC 이름은 동일하게 유지)
+# RWO이므로 backend와 자산 업로드 헬퍼 파드를 같은 노드에 두어야 함 (backend.yaml의 nodeSelector와 일치시킬 것)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rag-assets
+  namespace: cac
+spec:
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,72 @@
+# Gateway API 라우팅: / → frontend, /api → backend (동일 오리진이라 CORS/쿠키 문제 없음)
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cac-gateway
+  namespace: cac
+spec:
+  gatewayClassName: eg
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+---
+# 챗 파이프라인이 2~7분 걸리는 동기 요청이라 타임아웃을 10분으로 (Envoy 기본 15초)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api-route
+  namespace: cac
+spec:
+  parentRefs:
+    - name: cac-gateway
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      backendRefs:
+        - name: backend
+          port: 8000
+      timeouts:
+        request: 600s
+        backendRequest: 600s
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: root-route
+  namespace: cac
+spec:
+  parentRefs:
+    - name: cac-gateway
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: frontend
+          port: 3000
+---
+# Envoy의 stream idle timeout 기본 5분 → 응답 바이트가 5분간 없는 긴 요청이 끊기는 것 방지
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: long-request
+  namespace: cac
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: cac-gateway
+  timeout:
+    http:
+      streamIdleTimeout: 600s

@@ -1,0 +1,14 @@
+# nfs-ganesha-server-and-external-provisioner 헬름 값
+# 설치:
+#   helm repo add nfs-ganesha https://kubernetes-sigs.github.io/nfs-ganesha-server-and-external-provisioner/
+#   helm install nfs-server nfs-ganesha/nfs-server-provisioner -n cac -f deploy/k8s/nfs-values.yaml
+persistence:
+  enabled: true
+  storageClass: standard   # ganesha 서버의 백업 저장소는 kind 기본 SC (호스트 재export 회귀 회피)
+  size: 2Gi
+storageClass:
+  name: nfs
+  # Docker Desktop/kind 계열에서 필요한 클라이언트 마운트 워크어라운드
+  mountOptions:
+    - nolock
+    - nfsvers=4.1

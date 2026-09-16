@@ -234,3 +234,9 @@ e2e_output/
 # frontend 소스의 lib 디렉터리는 무시하지 않음 (위 lib/ 규칙 예외)
 !frontend/src/lib/
 !frontend/src/lib/**
+
+# Claude Code 개인 훅 (로컬 전용)
+.claude/hooks/
+
+# k8s Secret 실값 (커밋 금지)
+deploy/k8s/secrets.yaml

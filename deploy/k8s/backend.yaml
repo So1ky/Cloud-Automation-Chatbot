@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: cac
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: cac
+spec:
+  # 주의: 스케일아웃 전에 alembic 자동 마이그레이션 Job 분리 + chroma 동시 접근 문제 선결 필요
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      # 무거운 파드(torch+chroma)를 워커 한 대에 고정 — 이미지도 이 노드에만 적재함
+      nodeSelector:
+        kubernetes.io/hostname: desktop-worker
+      containers:
+        - name: backend
+          image: cac-backend:0.1.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: cac-secrets
+            - configMapRef:
+                name: cac-config
+          volumeMounts:
+            # RAG 자산 — knowledge_base.py의 __file__ 기준 하드코딩 경로에 그대로 마운트
+            - name: rag-assets
+              subPath: chroma_db
+              mountPath: /app/ai_engine/rag/chroma_db
+            - name: rag-assets
+              subPath: docs
+              mountPath: /app/ai_engine/docs
+            - name: tmp
+              mountPath: /tmp
+            # verify 에이전트가 소스 트리 안에 만드는 terraform 플러그인 캐시
+            - name: tf-plugin-cache
+              mountPath: /app/ai_engine/agents/verify/.terraform-plugin-cache
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              memory: 4Gi
+          # warmup(Chroma+BM25+CrossEncoder)에 1~2분 걸리므로 최대 5분 대기
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            periodSeconds: 30
+            timeoutSeconds: 5
+      volumes:
+        - name: rag-assets
+          persistentVolumeClaim:
+            claimName: rag-assets
+        - name: tmp
+          emptyDir: {}
+        - name: tf-plugin-cache
+          emptyDir:
+            sizeLimit: 4Gi
