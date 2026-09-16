@@ -233,23 +233,24 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
             subnet_children[sn].append(rid)
 
     # ── 8. 서브넷 → VPC 구성 ────────────────────────────────────────────────
-    # 실제 리소스가 있는 서브넷만 포함 (빈 서브넷은 VPC가 비어있으면 제외)
+    # 실제 리소스가 있는 서브넷만 포함 (빈 서브넷은 빈 아이콘으로 남으므로 제외)
     any_subnet_has_resource_check = any(
         len(children) > 0 for children in subnet_children.values()
     )
-    public_subnets  = [n for n, t in subnet_type_map.items() if t == "public"]
-    private_subnets = [n for n, t in subnet_type_map.items() if t == "private"]
+    public_subnets = [
+        n for n, t in subnet_type_map.items() if t == "public" and subnet_children.get(n)
+    ]
+    private_subnets = [
+        n for n, t in subnet_type_map.items() if t == "private" and subnet_children.get(n)
+    ]
 
     if any_subnet_has_resource_check:
-        for sn_name in subnet_type_map:
-            children = subnet_children.get(sn_name, [])
-            sn_res: dict = {
+        for sn_name in public_subnets + private_subnets:
+            resources[sn_name] = {
                 "Type": "AWS::EC2::Subnet",
                 "Preset": "PublicSubnet" if subnet_type_map[sn_name] == "public" else "PrivateSubnet",
+                "Children": subnet_children[sn_name],
             }
-            if children:
-                sn_res["Children"] = children
-            resources[sn_name] = sn_res
 
     # 서브넷 그룹 → HorizontalStack
     vpc_children: list = []
