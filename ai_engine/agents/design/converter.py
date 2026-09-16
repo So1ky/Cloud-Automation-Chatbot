@@ -183,7 +183,8 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
         rid = item["name"]
         db_names.append(rid)
         resources[rid] = {"Type": DATABASE_TYPE_MAP.get(item["type"], "AWS::RDS::DBInstance")}
-        subnets = item.get("subnets") or []
+        # DynamoDB는 VPC에 속하지 않는 리전 서비스 — LLM이 subnets를 지정해도 항상 VPC 밖에 배치
+        subnets = [] if item.get("type") == "DynamoDB" else (item.get("subnets") or [])
         if subnets and subnets[0] in subnet_children:
             subnet_children[subnets[0]].append(rid)
         else:
@@ -246,9 +247,12 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
 
     if any_subnet_has_resource_check:
         for sn_name in public_subnets + private_subnets:
+            is_public = subnet_type_map[sn_name] == "public"
             resources[sn_name] = {
                 "Type": "AWS::EC2::Subnet",
-                "Preset": "PublicSubnet" if subnet_type_map[sn_name] == "public" else "PrivateSubnet",
+                "Preset": "PublicSubnet" if is_public else "PrivateSubnet",
+                # AWS 공식 다이어그램 스타일의 서브넷 배경 채움 (퍼블릭 연녹 / 프라이빗 연청)
+                "FillColor": "rgba(239, 246, 229, 255)" if is_public else "rgba(224, 240, 241, 255)",
                 "Children": subnet_children[sn_name],
             }
 
@@ -264,14 +268,32 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
     elif public_subnets:
         vpc_children.extend(public_subnets)
 
-    if len(private_subnets) > 1:
-        resources["PrivateSubnetStack"] = {
-            "Type": "AWS::Diagram::HorizontalStack",
-            "Children": private_subnets,
-        }
-        vpc_children.append("PrivateSubnetStack")
-    elif private_subnets:
-        vpc_children.extend(private_subnets)
+    # DB 전용 서브넷(자식이 모두 RDS/ElastiCache 등)은 아랫줄로 분리 —
+    # 컴퓨팅→DB 화살표가 옆 서브넷 내부를 관통하지 않게 (AWS 다이어그램 관례)
+    def _is_db_subnet(sn: str) -> bool:
+        children = subnet_children[sn]
+        return bool(children) and all(
+            resources[c]["Type"].startswith(
+                ("AWS::RDS", "AWS::ElastiCache", "AWS::OpenSearch")
+            )
+            for c in children
+        )
+
+    db_private = [n for n in private_subnets if _is_db_subnet(n)]
+    app_private = [n for n in private_subnets if n not in db_private]
+
+    for stack_name, members in (
+        ("PrivateSubnetStack", app_private),
+        ("DatabaseSubnetStack", db_private),
+    ):
+        if len(members) > 1:
+            resources[stack_name] = {
+                "Type": "AWS::Diagram::HorizontalStack",
+                "Children": members,
+            }
+            vpc_children.append(stack_name)
+        elif members:
+            vpc_children.extend(members)
 
     # VPC는 실제 서브넷에 리소스가 하나라도 있을 때만 생성
     # 서브넷이 정의됐어도 안에 아무것도 없으면 (Lambda serverless 등) VPC 생성 안 함
@@ -290,7 +312,8 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
         # (CloudFront → ALB 수직선이 VPC 전체를 관통하는 시각적 혼란 방지)
         if igw_exists and not has_cdn_local:
             resources["InternetGateway"] = {"Type": "AWS::EC2::InternetGateway"}
-            vpc_res["BorderChildren"] = [{"Position": "S", "Resource": "InternetGateway"}]
+            # IGW는 북쪽(상단) 경계에 배치 — User → IGW → ALB 선이 VPC를 관통하지 않도록
+            vpc_res["BorderChildren"] = [{"Position": "N", "Resource": "InternetGateway"}]
 
         resources["VPC"] = vpc_res
 
@@ -378,6 +401,22 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
     #   Serverless: Streaming → Compute → Notification → DB/Storage
     aws_cloud_children: list = []
 
+    # 지원 서비스(Cognito/WAF/KMS 등)는 세로 기둥 대신 라벨 그룹 박스 안에 가로 배치
+    # (여백이 줄고 "데이터 흐름"과 "부가 서비스"가 시각적으로 구분됨)
+    if len(cloud_support) >= 2:
+        resources["SupportServicesGroup"] = {
+            "Type": "AWS::Diagram::Resource",
+            "Preset": "Generic group",
+            "Title": "Security & Support Services",
+            "Direction": "horizontal",
+            # 보안 서비스 아이콘(적색 계열)과 어울리는 옅은 로즈 배경 — 서브넷(녹/청)과 구분
+            "FillColor": "rgba(251, 240, 240, 255)",
+            "Children": cloud_support,
+        }
+        support_items = ["SupportServicesGroup"]
+    else:
+        support_items = cloud_support
+
     if has_vpc:
         # VPC 아키텍처: 진입점 → VPC → SQS(큐) → Lambda(처리) → SNS(알림) → 지원 서비스
         aws_cloud_children.extend(cloud_entry)          # CloudFront, Route53 등 (VPC 위)
@@ -385,14 +424,14 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
         aws_cloud_children.extend(cloud_streaming)      # SQS 등 입력 큐
         aws_cloud_children.extend(cloud_compute)        # Lambda 등 처리
         aws_cloud_children.extend(cloud_notification)   # SNS 등 완료 알림
-        aws_cloud_children.extend(cloud_support)        # ECR, KMS, Cognito 등
+        aws_cloud_children.extend(support_items)        # ECR, KMS, Cognito 등
     else:
         # Serverless: 진입점 → Streaming → Compute (DB/Storage는 섹션 10에서 OutputStack으로 추가)
         aws_cloud_children.extend(cloud_entry)
         aws_cloud_children.extend(cloud_streaming)
         aws_cloud_children.extend(cloud_compute)
         aws_cloud_children.extend(cloud_notification)
-        aws_cloud_children.extend(cloud_support)
+        aws_cloud_children.extend(support_items)
 
     # ── 10. 레이아웃: 출력 리소스 HorizontalStack ───────────────────────────
     # CDN이 있는 VPC 아키텍처에서는 S3가 CloudFront의 오리진이므로 cloud_entry와 함께 배치
@@ -402,14 +441,22 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
     else:
         output_resources = cloud_db + cloud_storage
 
+    # 데이터 저장소는 지원 서비스(Cognito/WAF 등) 앞에 삽입 — 컴퓨팅 바로 아래에 두어
+    # Compute → DB 화살표가 지원 서비스 아이콘 기둥을 관통하지 않게 한다.
+    # 비동기 파이프라인(SQS/Lambda)이 없으면 VPC 바로 다음에 배치해 화살표를 더 짧게.
+    if has_vpc and not cloud_streaming and not cloud_compute:
+        insert_at = aws_cloud_children.index("VPC") + 1
+    else:
+        insert_at = len(aws_cloud_children) - len(support_items)
     if len(output_resources) > 1:
         resources["OutputStack"] = {
             "Type": "AWS::Diagram::HorizontalStack",
             "Children": output_resources,
         }
-        aws_cloud_children.append("OutputStack")
+        aws_cloud_children.insert(insert_at, "OutputStack")
     else:
-        aws_cloud_children.extend(output_resources)
+        for rid in reversed(output_resources):
+            aws_cloud_children.insert(insert_at, rid)
 
 
     # ── 11. Links (SourcePosition/TargetPosition으로 화살표 정렬) ────────────
@@ -428,7 +475,13 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
             links.append({"Source": "User", "SourcePosition": "S",
                           "Target": cdn, "TargetPosition": "N",
                           "TargetArrowHead": arrow})
-        if lb_names:
+        # 내부 전용 ALB는 CloudFront가 오리진으로 접근할 수 없으므로 화살표 생략
+        # (프라이빗 서브넷을 관통하는 대각선 교차도 방지)
+        lb_items = arch.get("load_balancer") or []
+        if isinstance(lb_items, dict):
+            lb_items = [lb_items]
+        lb_internal = bool(lb_items and lb_items[0].get("internal"))
+        if lb_names and not lb_internal:
             # API 트래픽: CloudFront → ALB (CDN이 있을 때는 CloudFront를 통해 ALB로)
             links.append({"Source": cdn_names[0], "SourcePosition": "S",
                           "Target": lb_names[0], "TargetPosition": "N",
@@ -456,9 +509,20 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
     for lb in lb_names:
         for comp in original_compute:
             target = f"{comp}ASG" if comp in auto_scaling_map else comp
-            links.append({"Source": lb, "SourcePosition": "S",
-                          "Target": target, "TargetPosition": "N",
-                          "TargetArrowHead": arrow})
+            # 같은 서브넷에 나란히 배치된 경우(내부 ALB 등) 수평 화살표로 연결
+            same_subnet = next(
+                (ch for ch in subnet_children.values() if lb in ch and target in ch),
+                None,
+            )
+            if same_subnet is not None:
+                lb_is_right = same_subnet.index(lb) > same_subnet.index(target)
+                links.append({"Source": lb, "SourcePosition": "W" if lb_is_right else "E",
+                              "Target": target, "TargetPosition": "E" if lb_is_right else "W",
+                              "TargetArrowHead": arrow})
+            else:
+                links.append({"Source": lb, "SourcePosition": "S",
+                              "Target": target, "TargetPosition": "N",
+                              "TargetArrowHead": arrow})
 
     # Streaming → Compute (Kinesis/SQS → Lambda)
     for s_name in streaming_names + sqs_names:
@@ -481,8 +545,26 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
         # Lambda가 DB에 저장하는 역할을 하므로 ECS→DB 화살표 불필요
         if sqs_names and comp_type in {"ECS", "EKS", "Fargate"}:
             continue
+        comp_rid = f"{comp}ASG" if comp in auto_scaling_map else comp
         for j, db in enumerate(db_names):
-            pos = "SW" if j == 0 else "SE"
+            # 같은 서브넷에 나란히 배치된 DB(RDS 등)는 아이콘 옆면끼리 수평 연결
+            same_subnet = next(
+                (ch for ch in subnet_children.values() if comp_rid in ch and db in ch),
+                None,
+            )
+            if same_subnet is not None:
+                comp_is_right = same_subnet.index(comp_rid) > same_subnet.index(db)
+                links.append({"Source": comp, "SourcePosition": "W" if comp_is_right else "E",
+                              "Target": db, "TargetPosition": "E" if comp_is_right else "W",
+                              "TargetArrowHead": arrow})
+                continue
+            # VPC 안 컴퓨팅 → 외부 DB는 대각선이 되므로 라벨 텍스트를 피해
+            # 아이콘 옆면(E)에서 출발. 수직 정렬(서버리스 등)은 하단 중앙(S) 유지
+            comp_in_vpc = any(comp_rid in ch for ch in subnet_children.values())
+            if len(db_names) == 1:
+                pos = "E" if comp_in_vpc else "S"
+            else:
+                pos = "SW" if j == 0 else "SE"
             links.append({"Source": comp, "SourcePosition": pos,
                           "Target": db, "TargetPosition": "N",
                           "TargetArrowHead": arrow})
@@ -540,26 +622,8 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
                           "Target": sns_names[0], "TargetPosition": "N",
                           "TargetArrowHead": arrow})
 
-    # Lambda → KMS (암호화 키 사용)
-    if kms_exists:
-        for comp in original_compute:
-            comp_type = next(
-                (c.get("type") for c in arch.get("compute", []) if c["name"] == comp), ""
-            )
-            if comp_type == "Lambda":
-                links.append({"Source": comp, "SourcePosition": "E",
-                              "Target": "KMS", "TargetPosition": "W",
-                              "TargetArrowHead": arrow})
-
-    # ECS → NAT Gateway (프라이빗 서브넷 아웃바운드 트래픽)
-    for comp in original_compute:
-        comp_type = next(
-            (c.get("type") for c in arch.get("compute", []) if c["name"] == comp), ""
-        )
-        if comp_type in {"ECS", "EKS", "Fargate", "EC2"} and nat_names:
-            links.append({"Source": comp, "SourcePosition": "N",
-                          "Target": nat_names[0], "TargetPosition": "S",
-                          "TargetArrowHead": {"Type": "Open"}})
+    # Lambda → KMS 화살표는 생략 — KMS가 Security & Support Services 그룹에
+    # 표시되는 것으로 충분하고, 장거리 대각선이 다른 리소스를 관통해 가독성을 해침
 
     # Compute → NAT Gateway 화살표는 생략
     # (NAT Gateway가 Public Subnet에 있는 것 자체가 프라이빗→인터넷 경로를 의미,
