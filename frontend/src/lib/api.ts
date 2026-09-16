@@ -51,8 +51,8 @@ export async function apiFetch(
   path: string,
   options: ApiFetchOptions = {},
 ): Promise<Response> {
-  // 파이프라인 응답이 오래 걸릴 수 있어 기본 타임아웃을 넉넉히(3분) 잡는다.
-  const { timeoutMs = 180000, ...init } = options;
+  // 파이프라인 응답이 오래 걸릴 수 있어 기본 타임아웃을 넉넉히(10분) 잡는다.
+  const { timeoutMs = 600000, ...init } = options;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 

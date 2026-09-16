@@ -192,7 +192,7 @@ export default function Home() {
     setIsLoading(true);
 
     try {
-      const response = await apiFetch("/api/chat", {
+      const response = await apiFetch("/api/chat/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ requirements: text }),
