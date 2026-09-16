@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import List, Literal, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -24,7 +25,11 @@ from openai import APIConnectionError, APITimeoutError, RateLimitError
 from pydantic import BaseModel, Field
 
 from ai_engine.agents.verify.code_lint import lint_code
-from ai_engine.agents.verify.prompts import OPTIMIZATION_PROMPT, SYSTEM_PROMPT
+from ai_engine.agents.verify.prompts import (
+    FINOPS_TRANSLATE_PROMPT,
+    OPTIMIZATION_PROMPT,
+    SYSTEM_PROMPT,
+)
 from ai_engine.agents.verify.spec_lint import lint_spec
 from ai_engine.config import get_llm
 from ai_engine.agents.verify.tools import run_infracost, run_terraform_validate
@@ -113,6 +118,40 @@ def _run_optimization_analysis(user_requirements: str, yaml_output: str, terrafo
     }
 
 
+class FinopsTranslation(BaseModel):
+    """FinOps 권장사항 한국어 번역 structured output 루트 모델."""
+
+    messages: List[str] = Field(
+        description="Korean translation of each recommendation, same order and count as the input list"
+    )
+
+
+def _translate_finops_messages(finops_issues: List[dict]) -> None:
+    """Infracost FinOps 권장사항의 영어 message를 한국어로 번역한다 (in-place).
+
+    부가 정보이므로 실패하면 영어 원문을 그대로 둔다.
+    """
+    if not finops_issues:
+        return
+    try:
+        llm = get_llm("report")
+        structured_llm = llm.with_structured_output(FinopsTranslation)
+        numbered = "\n".join(
+            f"{i + 1}. [{issue.get('policy')}] {issue.get('message')}"
+            for i, issue in enumerate(finops_issues)
+        )
+        result: FinopsTranslation = structured_llm.invoke([
+            SystemMessage(content=FINOPS_TRANSLATE_PROMPT),
+            HumanMessage(content=numbered),
+        ])
+        if len(result.messages) == len(finops_issues):
+            for issue, ko in zip(finops_issues, result.messages):
+                # 모델이 입력의 번호("1. ")를 그대로 붙여 반환하는 경우 제거
+                issue["message"] = re.sub(r"^\s*\d+\.\s*", "", ko)
+    except Exception as e:
+        print(f"[검증 에이전트] FinOps 권장사항 번역 실패 → 영어 원문 유지: {e}")
+
+
 def _build_feedback(syntax: dict, llm_issues: List[dict], fix_target: str) -> str:
     """설계/개발 에이전트에게 되돌려 보낼 피드백 텍스트를 만든다."""
     lines: List[str] = []
@@ -192,12 +231,13 @@ def verify_node(state: GraphState) -> dict:
     if cost["skipped"]:
         print(f"[검증 에이전트] Infracost 건너뜀: {cost['reason']}")
     else:
+        _translate_finops_messages(cost.get("finops_issues") or [])
         try:
             monthly = f"{float(cost['total_monthly_cost']):,.2f}"
         except (TypeError, ValueError):
             monthly = str(cost["total_monthly_cost"])
         print(f"[검증 에이전트] 월간 예상 비용: {monthly} {cost['currency']} "
-              f"(FinOps 정책 위반 {len(cost.get('finops_issues', []))}건)")
+              f"(비용 최적화 제안 {len(cost.get('finops_issues', []))}건)")
 
     # ─── 통과 판정 및 Self-Healing 라우팅 ───────────────────────────────
     # 수렴 보장 원칙:

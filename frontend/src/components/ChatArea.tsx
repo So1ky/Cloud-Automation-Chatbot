@@ -288,16 +288,18 @@ function CostCard({ cost }: { cost: CostEstimate }) {
       )}
 
       {finops.length > 0 && (
-        <div className="mt-3 border-t border-emerald-100 pt-2">
-          <p className="mb-1 text-xs font-bold text-amber-700">FinOps 정책 위반 {finops.length}건</p>
-          <ul className="space-y-0.5">
+        <details className="mt-3 border-t border-emerald-100 pt-2">
+          <summary className="cursor-pointer text-xs font-bold text-emerald-700">
+            💡 비용 최적화 제안 {finops.length}건
+          </summary>
+          <ul className="mt-1 space-y-0.5">
             {finops.map((f, i) => (
               <li key={i} className="text-[13px] text-slate-700">
                 - {f.message || f.policy}
               </li>
             ))}
           </ul>
-        </div>
+        </details>
       )}
     </div>
   );
