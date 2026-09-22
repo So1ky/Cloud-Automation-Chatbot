@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: cac-frontend:0.1.0
+          image: 509149464672.dkr.ecr.ap-northeast-2.amazonaws.com/cloud-automation-chatbot/frontend:0.1.0
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000

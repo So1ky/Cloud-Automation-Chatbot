@@ -65,7 +65,7 @@ spec:
     - metadata:
         name: data
       spec:
-        storageClassName: standard
+        storageClassName: ebs-gp3
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:

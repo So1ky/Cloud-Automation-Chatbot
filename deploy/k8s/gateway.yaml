@@ -1,10 +1,39 @@
 # Gateway API 라우팅: / → frontend, /api → backend (동일 오리진이라 CORS/쿠키 문제 없음)
+# kubeadm 클러스터에는 클라우드 컨트롤러가 없어 LoadBalancer 대신 NodePort 80으로 노출
+# (kube-apiserver에 --service-node-port-range=80-32767 확장 필요)
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: proxy-config
+  namespace: envoy-gateway-system
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: NodePort
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              # Local(기본)이면 Envoy 파드가 있는 노드만 응답 — A레코드가 control-plane을
+              # 가리키므로 어느 노드로 들어와도 전달되게 Cluster로
+              externalTrafficPolicy: Cluster
+              ports:
+                - port: 80
+                  nodePort: 80
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
 metadata:
   name: eg
 spec:
   controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: proxy-config
+    namespace: envoy-gateway-system
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway

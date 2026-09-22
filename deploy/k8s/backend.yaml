@@ -26,12 +26,9 @@ spec:
       labels:
         app: backend
     spec:
-      # 무거운 파드(torch+chroma)를 워커 한 대에 고정 — 이미지도 이 노드에만 적재함
-      nodeSelector:
-        kubernetes.io/hostname: desktop-worker
       containers:
         - name: backend
-          image: cac-backend:0.1.1
+          image: 509149464672.dkr.ecr.ap-northeast-2.amazonaws.com/cloud-automation-chatbot/backend:0.1.1
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
@@ -58,7 +55,8 @@ spec:
               cpu: 500m
               memory: 2Gi
             limits:
-              memory: 4Gi
+              # 워커 노드가 4GB(t3.medium)라 4Gi limit은 감당 불가 — 실측 사용량 1.10GiB
+              memory: 2Gi
           # warmup(Chroma+BM25+CrossEncoder)에 1~2분 걸리므로 최대 5분 대기
           startupProbe:
             httpGet:

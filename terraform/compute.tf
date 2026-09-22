@@ -40,6 +40,9 @@ resource "aws_instance" "node" {
   # IMDSv1은 토큰 없이 조회되어 SSRF 취약점으로 임시 자격증명이 유출되는 경로가 된다.
   metadata_options {
     http_tokens = "required"
+    # 파드(오버레이 네트워크)에서 IMDS에 닿으려면 응답 TTL이 2홉을 견뎌야 한다.
+    # 기본값 1이면 EBS CSI 컨트롤러가 노드 IAM 자격증명을 읽지 못한다.
+    http_put_response_hop_limit = 2
   }
 
   user_data = templatefile("${path.module}/user_data.sh", {

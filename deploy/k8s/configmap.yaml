@@ -5,4 +5,4 @@ metadata:
   namespace: cac
 data:
   # 게이트웨이 동일 오리진 배포 기준. AI_MODEL_* 는 코드 기본값(gpt-4o-mini) 사용
-  FRONTEND_URL: "http://localhost"
+  FRONTEND_URL: "http://cloudinfra.help"
