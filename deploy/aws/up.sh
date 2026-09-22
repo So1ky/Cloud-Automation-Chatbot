@@ -3,7 +3,7 @@
 #
 # stop/start마다 퍼블릭 IP가 바뀌므로(EIP 미사용) 기동할 때마다 이 스크립트로
 # DNS를 맞춘다. 프라이빗 IP는 유지되므로 클러스터 자체는 손댈 것이 없다
-# (stop→start 복원 실측 검증: 노드 Ready ~30초, 파드 전부 Running ~3분).
+# (stop→start 복원 실측 검증: 노드 Ready ~30초, 서비스 응답까지 ~5분).
 set -euo pipefail
 
 TF_DIR="$(cd "$(dirname "$0")/../../terraform" && pwd)"
@@ -36,4 +36,5 @@ aws ec2 describe-instances --instance-ids "${ALL_IDS[@]}" \
   --query 'Reservations[].Instances[].[Tags[?Key==`Name`]|[0].Value, PublicIpAddress]' \
   --output table
 
-echo "완료. 파드 복원까지 ~3분 걸린다 → https://$DOMAIN"
+# 실측(2026-09-22): CSI 드라이버 등록·postgres 마운트 ~1.5분 + backend RAG 웜업 ~1.5분
+echo "완료. 파드 복원까지 ~5분 걸린다 → https://$DOMAIN"

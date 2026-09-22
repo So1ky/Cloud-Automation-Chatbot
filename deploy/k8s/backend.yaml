@@ -26,6 +26,17 @@ spec:
       labels:
         app: backend
     spec:
+      # 콜드 스타트 시 postgres(EBS 마운트가 CSI 드라이버 등록을 기다림)보다 먼저 뜨면
+      # DB 연결 크래시 → CrashLoopBackOff 백오프로 회복이 수 분 늘어진다.
+      # DB가 접속을 받을 때까지 여기서 대기해 크래시 카운트 자체를 만들지 않는다.
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:17-alpine # 본 DB와 같은 이미지 — pg_isready만 쓴다
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - until pg_isready -h postgres -p 5432; do echo "postgres 대기 중..."; sleep 3; done
       containers:
         - name: backend
           image: 509149464672.dkr.ecr.ap-northeast-2.amazonaws.com/cloud-automation-chatbot/backend:0.1.1
