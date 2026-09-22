@@ -25,6 +25,8 @@ spec:
               ports:
                 - port: 80
                   nodePort: 80
+                - port: 443
+                  nodePort: 443
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
@@ -43,12 +45,24 @@ kind: Gateway
 metadata:
   name: cac-gateway
   namespace: cac
+  annotations:
+    # cert-manager gateway-shim이 https 리스너의 hostname을 보고
+    # Certificate(cloudinfra-help-tls)를 자동 생성·갱신한다
+    cert-manager.io/cluster-issuer: letsencrypt
 spec:
   gatewayClassName: eg
   listeners:
     - name: http
       protocol: HTTP
       port: 80
+    - name: https
+      hostname: cloudinfra.help
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: cloudinfra-help-tls
 ---
 # 챗 파이프라인이 2~7분 걸리는 동기 요청이라 타임아웃을 10분으로 (Envoy 기본 15초)
 apiVersion: gateway.networking.k8s.io/v1
@@ -59,6 +73,7 @@ metadata:
 spec:
   parentRefs:
     - name: cac-gateway
+      sectionName: https
   rules:
     - matches:
         - path:
@@ -79,6 +94,7 @@ metadata:
 spec:
   parentRefs:
     - name: cac-gateway
+      sectionName: https
   rules:
     - matches:
         - path:
@@ -87,6 +103,24 @@ spec:
       backendRefs:
         - name: frontend
           port: 3000
+---
+# 80 리스너 전용: 모든 HTTP 요청을 HTTPS로 301 리다이렉트
+# (ACME 챌린지는 cert-manager 솔버 라우트가 Exact 경로로 우선 매칭되어 영향 없음)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-redirect
+  namespace: cac
+spec:
+  parentRefs:
+    - name: cac-gateway
+      sectionName: http
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
 ---
 # Envoy의 stream idle timeout 기본 5분 → 응답 바이트가 5분간 없는 긴 요청이 끊기는 것 방지
 apiVersion: gateway.envoyproxy.io/v1alpha1
