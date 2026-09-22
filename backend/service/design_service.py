@@ -11,12 +11,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def design(req: DesignRequest) -> DesignResponse:
+def design(req: DesignRequest, previous_yaml: str | None = None) -> DesignResponse:
     if not req.requirements.strip():
         raise HTTPException(status_code=400, detail="requirements가 비어 있습니다.")
 
     try:
-        result = run_pipeline(req.requirements)
+        result = run_pipeline(req.requirements, previous_yaml=previous_yaml)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:

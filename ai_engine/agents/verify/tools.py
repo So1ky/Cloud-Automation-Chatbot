@@ -146,7 +146,12 @@ def run_infracost(terraform_files: dict) -> dict:
     infracost_bin = shutil.which("infracost")
     if infracost_bin is None:
         return _infracost_skip("infracost CLI가 설치되어 있지 않습니다. (brew install infracost)")
-    if not os.environ.get("INFRACOST_API_KEY") and not _infracost_configured():
+    # v2 CLI 비대화형 인증은 INFRACOST_CLI_AUTHENTICATION_TOKEN 사용 (INFRACOST_API_KEY는 v1 하위호환)
+    if (
+        not os.environ.get("INFRACOST_CLI_AUTHENTICATION_TOKEN")
+        and not os.environ.get("INFRACOST_API_KEY")
+        and not _infracost_configured()
+    ):
         return _infracost_skip("infracost 인증이 없습니다. (infracost auth login)")
     if not terraform_files:
         return _infracost_skip("분석할 Terraform 파일이 없습니다.")

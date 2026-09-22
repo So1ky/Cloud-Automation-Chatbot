@@ -1,0 +1,138 @@
+# Gateway API 라우팅: / → frontend, /api → backend (동일 오리진이라 CORS/쿠키 문제 없음)
+# kubeadm 클러스터에는 클라우드 컨트롤러가 없어 LoadBalancer 대신 NodePort 80으로 노출
+# (kube-apiserver에 --service-node-port-range=80-32767 확장 필요)
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: proxy-config
+  namespace: envoy-gateway-system
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        # 게이트웨이도 2개 — externalTrafficPolicy Cluster라 어느 쪽이든 응답
+        replicas: 2
+      envoyService:
+        type: NodePort
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              # Local(기본)이면 Envoy 파드가 있는 노드만 응답 — A레코드가 control-plane을
+              # 가리키므로 어느 노드로 들어와도 전달되게 Cluster로
+              externalTrafficPolicy: Cluster
+              ports:
+                - port: 80
+                  nodePort: 80
+                - port: 443
+                  nodePort: 443
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: proxy-config
+    namespace: envoy-gateway-system
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cac-gateway
+  namespace: cac
+  annotations:
+    # cert-manager gateway-shim이 https 리스너의 hostname을 보고
+    # Certificate(cloudinfra-help-tls)를 자동 생성·갱신한다
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  gatewayClassName: eg
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+    - name: https
+      hostname: cloudinfra.help
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: cloudinfra-help-tls
+---
+# 챗 파이프라인이 2~7분 걸리는 동기 요청이라 타임아웃을 10분으로 (Envoy 기본 15초)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api-route
+  namespace: cac
+spec:
+  parentRefs:
+    - name: cac-gateway
+      sectionName: https
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      backendRefs:
+        - name: backend
+          port: 8000
+      timeouts:
+        request: 600s
+        backendRequest: 600s
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: root-route
+  namespace: cac
+spec:
+  parentRefs:
+    - name: cac-gateway
+      sectionName: https
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: frontend
+          port: 3000
+---
+# 80 리스너 전용: 모든 HTTP 요청을 HTTPS로 301 리다이렉트
+# (ACME 챌린지는 cert-manager 솔버 라우트가 Exact 경로로 우선 매칭되어 영향 없음)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-redirect
+  namespace: cac
+spec:
+  parentRefs:
+    - name: cac-gateway
+      sectionName: http
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+---
+# Envoy의 stream idle timeout 기본 5분 → 응답 바이트가 5분간 없는 긴 요청이 끊기는 것 방지
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: long-request
+  namespace: cac
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: cac-gateway
+  timeout:
+    http:
+      streamIdleTimeout: 600s

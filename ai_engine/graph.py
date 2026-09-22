@@ -29,6 +29,7 @@ def _initial_state(**overrides) -> GraphState:
         "user_requirements": "",
         "rag_context": "",
         "yaml_output": "",
+        "previous_yaml": "",
         "terraform_files": {},
         "validation_report": {},
         "validation_passed": False,
@@ -122,9 +123,11 @@ _pipeline_app = build_graph()
 
 # ─── 실행 헬퍼 ───────────────────────────────────────────────────────────────
 
-def run_design_agent(user_requirements: str) -> dict:
-    """설계 에이전트만 실행한다."""
-    result = _design_app.invoke(_initial_state(user_requirements=user_requirements))
+def run_design_agent(user_requirements: str, previous_yaml: str | None = None) -> dict:
+    """설계 에이전트만 실행한다. previous_yaml이 있으면 멀티턴 수정 설계."""
+    result = _design_app.invoke(
+        _initial_state(user_requirements=user_requirements, previous_yaml=previous_yaml or "")
+    )
     return {
         "yaml_output": result["yaml_output"],
         "rag_context": result["rag_context"],
@@ -150,21 +153,30 @@ def run_verify_agent(yaml_output: str, terraform_files: dict) -> dict:
     }
 
 
-def run_pipeline(user_requirements: str) -> dict:
-    """설계 → 개발 → 검증(Self-Healing) 전체 파이프라인을 실행한다."""
+def run_pipeline(user_requirements: str, previous_yaml: str | None = None) -> dict:
+    """설계 → 개발 → 검증(Self-Healing) 전체 파이프라인을 실행한다.
+
+    previous_yaml: 멀티턴 대화에서 직전 턴에 확정된 설계 YAML.
+    주어지면 설계 에이전트가 기존 설계를 최소 변경으로 수정한다.
+    """
     from ai_engine.report import generate_user_summary
 
     # 재귀 한도: 노드 수(3) × (1 + 최대 재시도) + 여유
     recursion_limit = 3 * (MAX_HEAL_RETRIES + 1) + 5
     result = _pipeline_app.invoke(
-        _initial_state(user_requirements=user_requirements),
+        _initial_state(
+            user_requirements=user_requirements, previous_yaml=previous_yaml or ""
+        ),
         config={"recursion_limit": recursion_limit},
     )
 
     # 검증 결과를 사용자용 설명문으로 변환 (다이어그램·코드와 함께 사용자에게 전달)
     print("[리포트] 사용자용 검증 설명문 생성 중...")
     validation_summary = generate_user_summary(
-        result["validation_report"], result["validation_passed"]
+        result["validation_report"],
+        result["validation_passed"],
+        previous_yaml=previous_yaml,
+        yaml_output=result["yaml_output"],
     )
 
     return {

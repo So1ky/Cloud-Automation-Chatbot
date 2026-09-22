@@ -15,6 +15,9 @@ class GraphState(TypedDict):
     # 설계 에이전트가 생성한 YAML 아키텍처 명세
     yaml_output: str
 
+    # 멀티턴: 같은 대화의 직전 턴에서 확정된 설계 YAML (첫 턴이면 빈 문자열)
+    previous_yaml: str
+
     # 개발 에이전트가 생성한 Terraform 파일 (파일명 → HCL 내용)
     # 예: {"main.tf": "...", "variables.tf": "...", "outputs.tf": "...", "providers.tf": "..."}
     terraform_files: dict

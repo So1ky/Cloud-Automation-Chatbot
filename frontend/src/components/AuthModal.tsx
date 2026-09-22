@@ -23,13 +23,13 @@ export default function AuthModal({
 
   if (!isOpen) return null;
 
-  const formatErrorMessage = (detail: any): string => {
+  const formatErrorMessage = (detail: unknown): string => {
     if (typeof detail === "string") {
       return detail;
     }
     if (Array.isArray(detail)) {
       return detail
-        .map((err: any) => {
+        .map((err: { loc?: string[]; msg?: string }) => {
           if (err.loc && err.loc.includes("email")) {
             return "올바른 이메일 주소 형식을 입력해 주세요 (예: test@test.com).";
           }
@@ -57,11 +57,11 @@ export default function AuthModal({
   };
 
   // 예외 객체를 사용자 친화적 메시지로 변환하는 헬퍼
-  const getFriendlyErrorMessage = (error: any, fallbackMessage: string): string => {
+  const getFriendlyErrorMessage = (error: unknown, fallbackMessage: string): string => {
     if (error instanceof Error && error.message === "Failed to fetch") {
       return "서버와 연결할 수 없습니다. 백엔드 서버가 실행 중인지 확인해 주세요.";
     }
-    return error.message || fallbackMessage;
+    return (error instanceof Error && error.message) || fallbackMessage;
   };
 
   const handleLogin = async (e: React.SyntheticEvent<HTMLFormElement>) => {
@@ -70,7 +70,7 @@ export default function AuthModal({
     setAuthSuccess("");
     setIsAuthLoading(true);
     try {
-      const response = await fetch("http://localhost:8000/api/user/login", {
+      const response = await fetch(`${API_BASE}/api/user/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -83,7 +83,7 @@ export default function AuthModal({
       setEmail("");
       setPassword("");
       onClose();
-    } catch (error: any) {
+    } catch (error) {
       setAuthError(getFriendlyErrorMessage(error, "로그인 중 오류가 발생했습니다."));
     } finally {
       setIsAuthLoading(false);
@@ -100,7 +100,7 @@ export default function AuthModal({
     }
     setIsAuthLoading(true);
     try {
-      const response = await fetch("http://localhost:8000/api/user/create", {
+      const response = await fetch(`${API_BASE}/api/user/create`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -124,7 +124,7 @@ export default function AuthModal({
         setAuthTab("login");
         setAuthSuccess("");
       }, 2000);
-    } catch (error: any) {
+    } catch (error) {
       setAuthError(getFriendlyErrorMessage(error, "회원가입 중 오류가 발생했습니다."));
     } finally {
       setIsAuthLoading(false);

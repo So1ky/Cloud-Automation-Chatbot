@@ -99,3 +99,14 @@ Missing requirement (category: "architecture") — the user asked for something
 
 Do NOT invent issues. A reasonable, requirement-matched architecture should return an empty list.
 """
+
+# 사용자 대면 출력(비용 최적화 제안) 생성용 — 한국어 프롬프트
+FINOPS_TRANSLATE_PROMPT = """Infracost가 생성한 영어 FinOps 비용 최적화 권장사항 목록을 한국어로 번역합니다.
+
+규칙:
+1. 번호 순서대로, 입력과 같은 개수의 번역문을 반환할 것.
+2. 각 항목은 비전문가도 이해할 수 있는 자연스러운 한국어 한두 문장으로.
+3. AWS 서비스명·리소스명(S3, RDS, Graviton 등)과 기술 용어는 영어 그대로 둘 것.
+4. 내용을 지어내거나 빼지 말 것 — 의미를 보존한 번역만 할 것.
+5. 번역문에 번호("1.")나 정책명 대괄호는 붙이지 말고 문장만 반환할 것.
+"""

@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: cac
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: cac
+spec:
+  # 주의: 스케일아웃 전에 alembic 자동 마이그레이션 Job 분리 + chroma 동시 접근 문제 선결 필요
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      # 콜드 스타트 시 postgres(EBS 마운트가 CSI 드라이버 등록을 기다림)보다 먼저 뜨면
+      # DB 연결 크래시 → CrashLoopBackOff 백오프로 회복이 수 분 늘어진다.
+      # DB가 접속을 받을 때까지 여기서 대기해 크래시 카운트 자체를 만들지 않는다.
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:17-alpine # 본 DB와 같은 이미지 — pg_isready만 쓴다
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - until pg_isready -h postgres -p 5432; do echo "postgres 대기 중..."; sleep 3; done
+      containers:
+        - name: backend
+          image: 509149464672.dkr.ecr.ap-northeast-2.amazonaws.com/cloud-automation-chatbot/backend:0.1.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: cac-secrets
+            - configMapRef:
+                name: cac-config
+          volumeMounts:
+            # RAG 자산 — knowledge_base.py의 __file__ 기준 하드코딩 경로에 그대로 마운트
+            - name: rag-assets
+              subPath: chroma_db
+              mountPath: /app/ai_engine/rag/chroma_db
+            - name: rag-assets
+              subPath: docs
+              mountPath: /app/ai_engine/docs
+            - name: tmp
+              mountPath: /tmp
+            # verify 에이전트가 소스 트리 안에 만드는 terraform 플러그인 캐시
+            - name: tf-plugin-cache
+              mountPath: /app/ai_engine/agents/verify/.terraform-plugin-cache
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              # 워커 노드가 4GB(t3.medium)라 4Gi limit은 감당 불가 — 실측 사용량 1.10GiB
+              memory: 2Gi
+          # warmup(Chroma+BM25+CrossEncoder)에 1~2분 걸리므로 최대 5분 대기
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            periodSeconds: 30
+            timeoutSeconds: 5
+      volumes:
+        - name: rag-assets
+          persistentVolumeClaim:
+            claimName: rag-assets
+        - name: tmp
+          emptyDir: {}
+        - name: tf-plugin-cache
+          emptyDir:
+            sizeLimit: 4Gi
