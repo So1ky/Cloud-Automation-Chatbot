@@ -10,6 +10,9 @@ spec:
   provider:
     type: Kubernetes
     kubernetes:
+      envoyDeployment:
+        # 게이트웨이도 2개 — externalTrafficPolicy Cluster라 어느 쪽이든 응답
+        replicas: 2
       envoyService:
         type: NodePort
         patch:

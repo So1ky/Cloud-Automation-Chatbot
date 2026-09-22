@@ -16,7 +16,8 @@ metadata:
   name: frontend
   namespace: cac
 spec:
-  replicas: 1
+  # 무상태라 2개 유지 — 워커 1대 장애/재배포 중에도 무중단
+  replicas: 2
   selector:
     matchLabels:
       app: frontend
