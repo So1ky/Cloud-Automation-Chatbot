@@ -4,5 +4,9 @@ metadata:
   name: cac-config
   namespace: cac
 data:
-  # 게이트웨이 동일 오리진 배포 기준. AI_MODEL_* 는 코드 기본값(gpt-4o-mini) 사용
+  # 게이트웨이 동일 오리진 배포 기준
   FRONTEND_URL: "http://cloudinfra.help"
+  # 로컬 .env와 동일한 에이전트별 모델 구성 (RAG 등 부가 작업은 기본값 gpt-4o-mini)
+  AI_MODEL_DESIGN: "gpt-5.6-luna"
+  AI_MODEL_DEVELOP: "gpt-5.6-luna"
+  AI_MODEL_VERIFY: "gpt-5.6-luna"
