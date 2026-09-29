@@ -23,6 +23,9 @@ if not SECRET_KEY:
         '(예: python -c "import secrets; print(secrets.token_urlsafe(48))").'
     )
 
+# HTTPS 배포에서는 COOKIE_SECURE=true로 설정해 Secure 플래그를 켠다 (로컬 http 개발은 기본값 false)
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+
 def create_user(db: Session, user_create: UserCreate):
     db_user = User(
         email=user_create.email,
@@ -72,7 +75,7 @@ def set_auth_cookie(response, token: str) -> None:
         max_age=86400 * 7,  # 7 days
         expires=86400 * 7,
         samesite="lax",
-        secure=False,  # Set to True in HTTPS production
+        secure=COOKIE_SECURE,
     )
 
 def verify_token(token: str) -> dict | None:

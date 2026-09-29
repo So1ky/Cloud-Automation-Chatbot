@@ -39,7 +39,7 @@ spec:
             - until pg_isready -h postgres -p 5432; do echo "postgres 대기 중..."; sleep 3; done
       containers:
         - name: backend
-          image: 509149464672.dkr.ecr.ap-northeast-2.amazonaws.com/cloud-automation-chatbot/backend:0.1.1
+          image: 509149464672.dkr.ecr.ap-northeast-2.amazonaws.com/cloud-automation-chatbot/backend:0.1.2
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
