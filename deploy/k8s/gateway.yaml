@@ -63,6 +63,23 @@ spec:
         mode: Terminate
         certificateRefs:
           - name: cloudinfra-help-tls
+    # Argo CD UI. TLS는 여기서 종료하고 argocd-server에는 평문(server.insecure)으로 전달.
+    # 인증서는 Gateway의 cert-manager 어노테이션이 hostname을 보고 자동 발급한다.
+    # 라우트는 argocd 네임스페이스에서만 붙일 수 있게 제한(다른 리스너는 기본값 = 같은 ns).
+    - name: https-argocd
+      hostname: argocd.cloudinfra.help
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: argocd-cloudinfra-help-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              kubernetes.io/metadata.name: argocd
 ---
 # 챗 파이프라인이 2~7분 걸리는 동기 요청이라 타임아웃을 10분으로 (Envoy 기본 15초)
 apiVersion: gateway.networking.k8s.io/v1
