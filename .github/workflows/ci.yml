@@ -1,0 +1,199 @@
+# CI/CD — 설계: docs/superpowers/specs/2026-10-26-cicd-design.md (로컬 문서)
+#
+# PR(develop/main 대상): check만.
+# main push: check → 변경 감지 → 바뀐 이미지만 빌드·ECR push → kustomization.yaml 태그 갱신 봇 커밋.
+# 그 뒤는 클러스터의 Argo CD가 main을 보고 동기화한다.
+#
+# 보안 원칙: 쓰기 job은 main push 전용 / pull_request_target 금지 / 액션은 커밋 SHA 고정.
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: "변경 감지를 무시하고 backend·frontend 모두 빌드"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# main 파이프라인은 직렬(봇 커밋 경합 방지). PR은 새 push가 오면 이전 실행 취소.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REGISTRY: 509149464672.dkr.ecr.ap-northeast-2.amazonaws.com
+  IMAGE_BACKEND: 509149464672.dkr.ecr.ap-northeast-2.amazonaws.com/cloud-automation-chatbot/backend
+  IMAGE_FRONTEND: 509149464672.dkr.ecr.ap-northeast-2.amazonaws.com/cloud-automation-chatbot/frontend
+
+jobs:
+  # 로컬 훅(.claude/hooks)과 같은 범위: py_compile / eslint / tsc
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Python 문법 검사
+        run: python -m compileall -q backend ai_engine migrations
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: frontend 의존성
+        working-directory: frontend
+        run: npm ci
+      - name: eslint
+        working-directory: frontend
+        run: npx eslint .
+      - name: tsc
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+  # 어느 이미지를 빌드할지 결정. PR에서는 돌지 않는다.
+  changes:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.detect.outputs.backend }}
+      frontend: ${{ steps.detect.outputs.frontend }}
+      tag: ${{ steps.detect.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: 변경 경로 감지
+        id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          FORCE: ${{ inputs.force_build }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          echo "tag=main-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          # 수동 실행(강제) 또는 비교 기준 커밋이 없으면(첫 push·force push) 둘 다 빌드
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$FORCE" = "true" ]; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"; echo "frontend=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"; echo "frontend=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+          echo "변경 파일:"; echo "$CHANGED"
+          if echo "$CHANGED" | grep -qE '^(backend/|ai_engine/|migrations/|alembic\.ini$|requirements\.txt$|deploy/backend\.Dockerfile$)'; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "backend=false" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$CHANGED" | grep -qE '^(frontend/|deploy/frontend\.Dockerfile$)'; then
+            echo "frontend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "frontend=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-backend:
+    needs: [check, changes]
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC 토큰 발급
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/backend.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE_BACKEND }}:${{ needs.changes.outputs.tag }}
+          # requirements.txt가 안 바뀌면 torch·리랭커 모델 레이어를 재사용
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+  build-frontend:
+    needs: [check, changes]
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: frontend
+          file: deploy/frontend.Dockerfile
+          platforms: linux/amd64
+          push: true
+          # 동일 오리진 배포라 API base는 빈 문자열
+          build-args: NEXT_PUBLIC_API_BASE=
+          tags: ${{ env.IMAGE_FRONTEND }}:${{ needs.changes.outputs.tag }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  # 빌드된 쪽의 태그만 kustomization.yaml에 반영해 main에 커밋. 이 커밋이 Argo CD 동기화를 유발한다.
+  update-manifest:
+    needs: [changes, build-backend, build-frontend]
+    # 빌드 job은 skip될 수 있으므로 always()로 들어와 결과를 직접 판정:
+    # 하나 이상 성공 + 실패 없음일 때만 실행
+    if: >-
+      always() &&
+      needs.changes.result == 'success' &&
+      (needs.build-backend.result == 'success' || needs.build-frontend.result == 'success') &&
+      needs.build-backend.result != 'failure' && needs.build-frontend.result != 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - name: 태그 갱신
+        env:
+          TAG: ${{ needs.changes.outputs.tag }}
+          BACKEND_BUILT: ${{ needs.build-backend.result == 'success' }}
+          FRONTEND_BUILT: ${{ needs.build-frontend.result == 'success' }}
+        run: |
+          # yq는 ubuntu 러너에 기본 설치
+          if [ "$BACKEND_BUILT" = "true" ]; then
+            IMG="$IMAGE_BACKEND" yq -i '(.images[] | select(.name == strenv(IMG))).newTag = strenv(TAG)' deploy/k8s/kustomization.yaml
+          fi
+          if [ "$FRONTEND_BUILT" = "true" ]; then
+            IMG="$IMAGE_FRONTEND" yq -i '(.images[] | select(.name == strenv(IMG))).newTag = strenv(TAG)' deploy/k8s/kustomization.yaml
+          fi
+          git diff --stat
+      - name: 봇 커밋 push
+        env:
+          TAG: ${{ needs.changes.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/k8s/kustomization.yaml
+          if git diff --cached --quiet; then echo "변경 없음"; exit 0; fi
+          git commit -m "chore(deploy): 이미지 태그 ${TAG} 반영 [skip ci]"
+          git pull --rebase origin main
+          git push origin main
