@@ -1,4 +1,4 @@
-"""진입점: 설계 에이전트 실행 (사용자 자연어 입력 모드)."""
+"""진입점: 설계 + 개발 에이전트 실행 (사용자 자연어 입력 모드)."""
 
 import sys
 import io
@@ -12,12 +12,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from ai_engine.graph import run_design_agent
+from ai_engine.graph import run_pipeline
 
 
 def main() -> None:
     print("=" * 55)
-    print("   Cloud Infrastructure Design Agent")
+    print("   Cloud Infrastructure Design & IaC Agent")
     print("=" * 55)
     print("AWS 클라우드 인프라 요구사항을 자연어로 입력하세요.")
     print("(종료: 'exit' 또는 'quit' 입력)\n")
@@ -37,15 +37,66 @@ def main() -> None:
             break
 
         print(f"\n[입력] {user_input}\n")
-        print("설계 중...\n")
+        print("설계 및 코드 생성 중...\n")
 
         try:
-            result = run_design_agent(user_input)
+            result = run_pipeline(user_input)
 
-            print("\n[출력] 생성된 YAML 아키텍처 명세:")
+            print("\n[1단계] 생성된 YAML 아키텍처 명세:")
             print("-" * 55)
             print(result["yaml_output"])
             print("-" * 55)
+
+            print("\n[2단계] 생성된 Terraform 파일:")
+            for filename, content in result["terraform_files"].items():
+                print(f"\n{'=' * 55}")
+                print(f"  {filename}")
+                print("=" * 55)
+                print(content)
+
+            print("\n[3단계] 검증 결과:")
+            print("-" * 55)
+            report = result.get("validation_report", {})
+            print(f"최종 판정: {'통과' if result.get('validation_passed') else '실패'} "
+                  f"(검증 시도 {report.get('attempts', 1)}회)")
+
+            syntax = report.get("terraform_validate", {})
+            if syntax.get("skipped"):
+                print(f"- terraform validate: 건너뜀 ({syntax.get('reason')})")
+            else:
+                print(f"- terraform validate: {'통과' if syntax.get('passed') else '실패'}")
+                for err in syntax.get("errors", []):
+                    print(f"    오류: {err['summary']}")
+
+            security = report.get("security_analysis", {})
+            if security.get("skipped"):
+                print(f"- 보안/모범사례 분석: 건너뜀 ({security.get('reason')})")
+            else:
+                issues = security.get("issues", [])
+                print(f"- 보안/모범사례 분석: 이슈 {len(issues)}개")
+                for issue in issues:
+                    print(f"    [{issue['severity']}/{issue['category']}] {issue['description']}")
+
+            optimization = report.get("optimization_analysis", {})
+            if optimization.get("skipped"):
+                print(f"- 최적화 분석: 건너뜀 ({optimization.get('reason')})")
+            else:
+                opt_issues = optimization.get("issues", [])
+                print(f"- 최적화 분석: 이슈 {len(opt_issues)}개")
+                for issue in opt_issues:
+                    print(f"    [{issue['severity']}/{issue['category']}] {issue['description']}")
+
+            cost = report.get("cost_estimate", {})
+            if cost.get("skipped"):
+                print(f"- 비용 분석: 건너뜀 ({cost.get('reason')})")
+            else:
+                print(f"- 비용 분석: 월 예상 {cost.get('total_monthly_cost')} {cost.get('currency')}")
+
+            if result.get("validation_summary"):
+                print("\n[4단계] 사용자 안내문:")
+                print("-" * 55)
+                print(result["validation_summary"])
+
             print("\n다음 요구사항을 입력하거나 'exit'으로 종료하세요.\n")
 
         except Exception as e:

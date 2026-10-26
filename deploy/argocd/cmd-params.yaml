@@ -1,0 +1,12 @@
+# argocd-server를 평문 HTTP로 둔다. TLS는 cac-gateway(Envoy)가 종료한다.
+# install.yaml의 같은 이름 ConfigMap을 덮어쓰므로 설치 "후"에 apply하고 server를 재시작할 것.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cmd-params-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  server.insecure: "true"

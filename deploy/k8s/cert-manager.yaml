@@ -1,0 +1,21 @@
+# Let's Encrypt ACME 발급자. HTTP-01 챌린지를 Gateway API로 푼다:
+# cert-manager가 /.well-known/acme-challenge/* 에 응답하는 임시 HTTPRoute를
+# cac-gateway의 80 리스너에 붙여 도메인 소유를 증명한다 (검증 후 자동 삭제).
+# 선행 조건: cert-manager 설치 시 config.gatewayAPI.enabled=true
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    # email 미등록 — 갱신은 cert-manager가 자동 수행, 만료 알림 불필요 (저장소 이메일 노출 회피)
+    privateKeySecretRef:
+      name: letsencrypt-account-key
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - kind: Gateway
+                name: cac-gateway
+                namespace: cac

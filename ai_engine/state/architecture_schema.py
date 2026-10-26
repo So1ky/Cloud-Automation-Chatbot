@@ -35,7 +35,10 @@ class ComputeInstance(BaseModel):
     name: str
     instance_type: Optional[str] = None
     count: Optional[int] = None
-    subnets: List[str] = Field(description="List of subnet names. Use multiple subnets for EKS/ECS Multi-AZ.")
+    subnets: Optional[List[str]] = Field(
+        default=None,
+        description="Subnet names. Required for EC2/ECS/EKS/Fargate inside VPC. Leave null for Lambda without VPC."
+    )
 
 
 class AutoScaling(BaseModel):
@@ -61,7 +64,11 @@ class ApiGateway(BaseModel):
 class LoadBalancer(BaseModel):
     type: Literal["ALB", "NLB"] = "ALB"
     name: str
-    subnets: List[str] = Field(description="List of public subnet names. ALB requires 2+ subnets in different AZs.")
+    internal: bool = Field(
+        default=False,
+        description="true for internal-only load balancers (corporate network access via VPN/Direct Connect). Internal LBs go in PRIVATE subnets; internet-facing LBs go in PUBLIC subnets."
+    )
+    subnets: List[str] = Field(description="2+ subnet names in different AZs. PUBLIC subnets when internal=false, PRIVATE subnets when internal=true.")
 
 
 class Database(BaseModel):
@@ -125,6 +132,7 @@ class Security(BaseModel):
     waf: bool = False
     shield: bool = False
     guard_duty: bool = False
+    kms: bool = False
 
 
 class CloudWatchAlarm(BaseModel):
@@ -164,7 +172,9 @@ class Architecture(BaseModel):
     name: str
     description: str
     region: str = "ap-northeast-2"
-    vpc: VPC
+    # 서버리스(관리형 서비스만 사용) 아키텍처는 VPC가 없어야 하므로 Optional.
+    # 프롬프트 규칙 4~5(VPC 생성 조건)와 일치시키기 위함.
+    vpc: Optional[VPC] = None
     networking: Optional[Networking] = None
     compute: List[ComputeInstance]
     auto_scaling: Optional[List[AutoScaling]] = None

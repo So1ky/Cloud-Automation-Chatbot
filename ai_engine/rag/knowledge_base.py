@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """AWS Well-Architected Framework PDF 문서를 ChromaDB에 인덱싱하고 검색하는 모듈.
 
 개선 사항:
@@ -8,17 +10,18 @@
 """
 
 import re
+
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
-from langchain_classic.retrievers import EnsembleRetriever
+from langchain.retrievers import EnsembleRetriever
 from pydantic import BaseModel, Field
 
 AI_ENGINE_DIR = Path(__file__).parent.parent
@@ -186,6 +189,18 @@ def rerank_documents(query: str, docs: list, top_k: int = 5) -> list:
     return [doc for _, doc in scored[:top_k]]
 
 
+def warmup_search_stack() -> None:
+    """서버 시작 시 호출: ChromaDB + BM25 인덱스 + 리랭커를 미리 로드한다.
+
+    호출하지 않으면 이 비용(1~2분)이 첫 사용자 요청에 청구되어
+    프론트엔드 타임아웃(3분)을 초과할 수 있다.
+    """
+    load_knowledge_base()
+    _get_bm25_retriever()
+    _get_reranker()
+    print("[RAG] 검색 스택 웜업 완료 (ChromaDB + BM25 + Reranker)")
+
+
 # ─── LLM 쿼리 확장 (번역 + Multi-query 1회 통합 호출) ────────────────────────
 
 class _QueryExpansion(BaseModel):
@@ -200,7 +215,8 @@ def expand_query(requirement: str) -> tuple[str, list[str]]:
     Returns:
         (translated_query, [query1, query2, query3, query4])
     """
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+    from ai_engine.config import get_llm
+    llm = get_llm("rag", temperature=0.3)
     structured_llm = llm.with_structured_output(_QueryExpansion)
 
     result: _QueryExpansion = structured_llm.invoke([
@@ -233,20 +249,19 @@ def search_knowledge_base(query: str, k: int = 8, top_k: int = 5) -> str:
     print(f"[RAG] Multi-query {len(multi_queries)}개 생성")
     all_queries = [translated_original] + multi_queries
 
-    # 3. 각 쿼리별 하이브리드 검색 → 후보 풀 구성 (중복 제거)
+    # 2. 각 쿼리별 하이브리드 검색 → 후보 풀 구성 (중복 제거)
     vectorstore = load_knowledge_base()
     bm25_retriever = _get_bm25_retriever(k=k)
+    vector_retriever = vectorstore.as_retriever(search_kwargs={"k": k})
+    ensemble = EnsembleRetriever(
+        retrievers=[vector_retriever, bm25_retriever],
+        weights=[0.6, 0.4],
+    )
 
     seen_contents: set[str] = set()
     candidate_docs: list[Document] = []
 
     for q in all_queries:
-        vector_retriever = vectorstore.as_retriever(search_kwargs={"k": k})
-        bm25_retriever.k = k
-        ensemble = EnsembleRetriever(
-            retrievers=[vector_retriever, bm25_retriever],
-            weights=[0.6, 0.4],
-        )
         for doc in ensemble.invoke(q):
             key = doc.page_content[:150]
             if key not in seen_contents:

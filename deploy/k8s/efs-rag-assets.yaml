@@ -1,0 +1,32 @@
+# RAG 자산(chroma_db + PDF)용 EFS 공유 볼륨 — CSI 드라이버 없이 기본 nfs 타입 static PV.
+# server는 terraform output efs_dns_name. 노드에 nfs-common 필요(user_data.sh).
+# 원래 클러스터에 수동 적용돼 있던 것을 git(Argo CD 관리)으로 편입 — 2026-10-26 live 리소스와 대조 완료.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rag-assets
+spec:
+  capacity:
+    storage: 1Gi # EFS는 탄력 용량이라 숫자는 형식상 값
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  mountOptions:
+    - nfsvers=4.1
+  nfs:
+    server: fs-075591b9df3af93a8.efs.ap-northeast-2.amazonaws.com
+    path: /
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rag-assets
+  namespace: cac
+spec:
+  storageClassName: ""
+  volumeName: rag-assets
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi

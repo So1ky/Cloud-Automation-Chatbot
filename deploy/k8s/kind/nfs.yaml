@@ -1,0 +1,13 @@
+# RAG 자산(chroma_db + PDF)용 공유 볼륨 — NFS 프로비저너(nfs-values.yaml) 설치 후 적용
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rag-assets
+  namespace: cac
+spec:
+  storageClassName: nfs
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
