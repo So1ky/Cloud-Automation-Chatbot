@@ -64,3 +64,9 @@ variable "domain_name" {
   type        = string
   default     = "cloudinfra.help"
 }
+
+variable "github_repo" {
+  description = "GitHub Actions OIDC 신뢰 대상 저장소 (owner/name). main 브랜치의 워크플로만 역할을 받는다"
+  type        = string
+  default     = "So1ky/Cloud-Automation-Chatbot"
+}
