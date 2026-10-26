@@ -1,6 +1,6 @@
 # RAG 자산(chroma_db + PDF)용 EFS 공유 볼륨 — CSI 드라이버 없이 기본 nfs 타입 static PV.
 # server는 terraform output efs_dns_name. 노드에 nfs-common 필요(user_data.sh).
-# 원래 클러스터에 수동 적용돼 있던 것을 git(Argo CD 관리)으로 편입 — 2026-10-26 live 리소스와 대조 완료.
+# 원래 클러스터에 수동 적용돼 있던 것을 git(Argo CD 관리)으로 편입 — 2026-10-26 live 리소스와 대조 완료(mountOptions만 의도적 강화).
 apiVersion: v1
 kind: PersistentVolume
 metadata:
@@ -11,8 +11,16 @@ spec:
   accessModes:
     - ReadWriteMany
   persistentVolumeReclaimPolicy: Retain
+  # AWS 권장 EFS 마운트 옵션. 원래 수동 PV에는 nfsvers=4.1만 있었고 Argo CD 첫 동기화로 보강
+  # (2026-10-26). noresvport: 마운트 타겟 재연결 시 새 소스 포트 사용 — EFS 재연결 안정성 핵심.
   mountOptions:
     - nfsvers=4.1
+    - rsize=1048576
+    - wsize=1048576
+    - hard
+    - timeo=600
+    - retrans=2
+    - noresvport
   nfs:
     server: fs-075591b9df3af93a8.efs.ap-northeast-2.amazonaws.com
     path: /
