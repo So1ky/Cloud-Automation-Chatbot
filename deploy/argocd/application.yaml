@@ -1,0 +1,20 @@
+# 앱 Application: 이 저장소 main의 deploy/k8s(kustomize)를 cac 네임스페이스에 동기화.
+# 첫 적용 시에는 syncPolicy를 떼고(수동) diff를 눈으로 확인한 뒤 자동으로 전환한다 — README 참조.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cac
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/So1ky/Cloud-Automation-Chatbot.git
+    targetRevision: main
+    path: deploy/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cac
+  syncPolicy:
+    automated:
+      prune: true    # git에서 지운 리소스는 클러스터에서도 삭제
+      selfHeal: true # 손으로 바꾼 건 git 상태로 되돌림
