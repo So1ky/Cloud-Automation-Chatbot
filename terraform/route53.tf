@@ -27,3 +27,13 @@ resource "aws_route53_record" "app" {
     ignore_changes = [records]
   }
 }
+
+# Argo CD UI 진입점. apex의 CNAME이라 up.sh가 apex A레코드를 갱신하면 같이 따라간다.
+# (CNAME 자체를 up.sh가 건드릴 필요 없음)
+resource "aws_route53_record" "argocd" {
+  zone_id = aws_route53_zone.main.zone_id
+  name    = "argocd.${var.domain_name}"
+  type    = "CNAME"
+  ttl     = 300
+  records = [var.domain_name]
+}

@@ -19,3 +19,24 @@ resource "aws_ecr_repository" "app" {
     Name = "${var.project_name}-${each.key}"
   }
 }
+
+# CI가 커밋마다 main-<sha> 태그로 push하므로 이미지가 무한히 쌓인다.
+# 최근 10개만 남기고 만료시킨다(롤백 범위 = 최근 10회 배포). 수동 태그(0.1.x)는 영향 없음.
+resource "aws_ecr_lifecycle_policy" "app" {
+  for_each   = aws_ecr_repository.app
+  repository = each.value.name
+
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1
+      description  = "CI 태그(main-*) 최근 10개만 보관"
+      selection = {
+        tagStatus     = "tagged"
+        tagPrefixList = ["main-"]
+        countType     = "imageCountMoreThan"
+        countNumber   = 10
+      }
+      action = { type = "expire" }
+    }]
+  })
+}

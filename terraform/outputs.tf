@@ -63,3 +63,8 @@ output "efs_dns_name" {
   description = "EFS 마운트용 DNS 이름 (<fs-id>.efs.<region>.amazonaws.com)"
   value       = aws_efs_file_system.rag_assets.dns_name
 }
+
+output "github_actions_role_arn" {
+  description = "GitHub Actions가 assume할 역할 ARN. 저장소 Secret AWS_ROLE_ARN에 등록한다"
+  value       = aws_iam_role.github_actions.arn
+}
