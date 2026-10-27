@@ -27,6 +27,7 @@ kubectl apply -f deploy/monitoring/secrets.yaml
 ```
 
 `secrets.yaml`은 `.gitignore`로 제외되어 있으며 절대 커밋하지 말 것. 웹훅 URL이 유출되면 Discord에서 재발급한다.
+Grafana admin 비밀번호는 **최초 초기화 때만** `grafana-admin` Secret에서 읽어 DB(PVC)에 저장된다. 나중에 Secret을 바꿔도 비밀번호는 바뀌지 않으므로, 변경은 Grafana UI(또는 `grafana cli admin reset-admin-password`)로 한다.
 
 ## 1. Phase 1 — 메트릭
 
@@ -42,7 +43,12 @@ kubectl -n monitoring get pvc                      # prometheus 10Gi, grafana 1G
 free -m | awk 'NR==2{print "available MB:",$7}'   # 10분 뒤 ≥ 500
 ```
 브라우저 `https://grafana.cloudinfra.help` → admin / secrets.yaml 비밀번호. Dashboards → "CAC / 앱 개요", "CAC / Envoy RED".
-Prometheus 타깃 확인: `kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090` → http://localhost:9090/targets — DOWN 0개.
+Prometheus 타깃 확인(control-plane에서 exec, 기대값 `DOWN: 0`):
+```bash
+kubectl -n monitoring exec sts/prometheus-kube-prometheus-stack-prometheus -c prometheus -- \
+  wget -qO- 'http://localhost:9090/api/v1/targets?state=active' | python3 -c \
+  "import json,sys; t=json.load(sys.stdin)['data']['activeTargets']; print({x['scrapePool']: x['health'] for x in t}); print('DOWN:', sum(x['health']!='up' for x in t))"
+```
 Argo 상태 확인: `kubectl -n argocd get applications` — metrics-server, kube-prometheus-stack, monitoring-config 모두 `Synced` / `Healthy`.
 
 ## 2. Phase 2 — 로그
@@ -68,5 +74,7 @@ Grafana Explore → Loki → `{namespace="cac", container="backend"}`.
 
 - 클러스터를 꺼두면 모니터링도 꺼진다. PVC는 남아 cac-up 후 그래프가 이어진다.
 - 가짜 알림이 보이면 `kube-prometheus-stack-values.yaml`의 `defaultRules.disabled`에 이름 추가 → PR.
-- Prometheus·Alertmanager·Loki UI는 비공개. `kubectl -n monitoring port-forward svc/kube-prometheus-stack-alertmanager 9093`.
+- Prometheus·Alertmanager·Loki UI는 비공개. 상태 확인은 위처럼 `kubectl exec` + wget.
+  브라우저가 필요하면 노트북에서 `aws ssm start-session --target <control-plane 인스턴스 ID> --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["9090"],"localPortNumber":["9090"]}'` 로 포워딩한 뒤,
+  control-plane에서 `kubectl -n monitoring port-forward --address 0.0.0.0 svc/kube-prometheus-stack-prometheus 9090`.
 - 메모리가 1.3GB를 넘으면 values에서 `retention: 5d`, `scrapeInterval: 60s`로 하향.
