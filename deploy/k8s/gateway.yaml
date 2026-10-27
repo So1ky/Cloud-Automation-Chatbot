@@ -80,6 +80,21 @@ spec:
           selector:
             matchLabels:
               kubernetes.io/metadata.name: argocd
+    # Grafana UI. argocd 리스너와 같은 구조 — TLS 종료 후 평문으로 전달, 라우트는 monitoring ns만.
+    - name: https-grafana
+      hostname: grafana.cloudinfra.help
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: grafana-cloudinfra-help-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
 ---
 # 챗 파이프라인이 2~7분 걸리는 동기 요청이라 타임아웃을 10분으로 (Envoy 기본 15초)
 apiVersion: gateway.networking.k8s.io/v1
