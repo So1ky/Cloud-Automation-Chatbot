@@ -1,0 +1,29 @@
+# metrics-server Application. 차트는 공식 저장소, values는 이 git(ref: values).
+# 첫 등록은 automated 블록을 떼고(수동) diff 확인 후 자동 전환 — deploy/monitoring/README.md 참조.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metrics-server
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://kubernetes-sigs.github.io/metrics-server/
+      chart: metrics-server
+      targetRevision: 3.14.0
+      helm:
+        releaseName: metrics-server
+        valueFiles:
+          - $values/deploy/monitoring/metrics-server-values.yaml
+    - repoURL: https://github.com/So1ky/Cloud-Automation-Chatbot.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    automated:
+      prune: true
+      selfHeal: true

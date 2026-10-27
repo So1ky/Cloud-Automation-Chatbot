@@ -144,6 +144,7 @@ kubectl apply -f deploy/k8s/kind/nfs.yaml
 - GitHub Secret은 `AWS_ROLE_ARN` 하나(`terraform output github_actions_role_arn`). 액세스 키 없음.
 - 롤백: 봇 커밋을 `git revert` → main push.
 - Argo CD 설치·UI(`https://argocd.cloudinfra.help`)·웹훅은 `deploy/argocd/README.md` 참고.
+- 모니터링(Prometheus·Grafana·Loki·Discord 알림, `https://grafana.cloudinfra.help`)은 `deploy/monitoring/README.md` 참고.
 
 ## 정리
 

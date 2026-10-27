@@ -1,0 +1,16 @@
+# metrics-server — kubectl top / HPA용 리소스 메트릭 API.
+# kubeadm kubelet 인증서는 자체 서명이라 --kubelet-insecure-tls 없이는 스크랩 실패.
+args:
+  - --kubelet-insecure-tls
+nodeSelector:
+  node-role.kubernetes.io/control-plane: ""
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+resources:
+  requests:
+    cpu: 50m
+    memory: 50Mi
+  limits:
+    memory: 100Mi

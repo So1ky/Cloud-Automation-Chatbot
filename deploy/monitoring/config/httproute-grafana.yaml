@@ -1,0 +1,16 @@
+# grafana.cloudinfra.help → Grafana. cac 네임스페이스 Gateway의 https-grafana 리스너에 cross-namespace로 붙는다.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: grafana
+spec:
+  parentRefs:
+    - name: cac-gateway
+      namespace: cac
+      sectionName: https-grafana
+  hostnames:
+    - grafana.cloudinfra.help
+  rules:
+    - backendRefs:
+        - name: kube-prometheus-stack-grafana
+          port: 80

@@ -1,0 +1,34 @@
+# Discord 라우팅. 루트 matcher severity=~critical|warning 이라 Watchdog·InfoInhibitor(severity=none)는 안 보낸다.
+# webhook URL은 Secret alertmanager-discord(git 밖). kube-prometheus-stack values의 matcher 전략 None이 전제.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: discord
+spec:
+  route:
+    receiver: discord
+    groupBy: [alertname, namespace]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 4h
+    matchers:
+      - name: severity
+        matchType: =~
+        value: critical|warning
+    routes:
+      - receiver: discord
+        matchers:
+          - name: severity
+            matchType: "="
+            value: warning
+        groupInterval: 1h
+        repeatInterval: 12h
+  receivers:
+    - name: discord
+      discordConfigs:
+        - apiURL:
+            name: alertmanager-discord
+            key: webhook-url
+          sendResolved: true
+          title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+          message: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'

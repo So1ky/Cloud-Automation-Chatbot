@@ -1,0 +1,44 @@
+{
+  "uid": "cac-envoy-red",
+  "title": "CAC / Envoy RED",
+  "tags": ["cac"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "time": {"from": "now-6h", "to": "now"},
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "요청 수 (req/s, 라우트별)",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "targets": [{"refId": "A", "legendFormat": "{{envoy_cluster_name}}",
+        "expr": "sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_total{envoy_cluster_name=~\"httproute/cac/.*\"}[5m]))"}]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "5xx 비율 (/api)",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1,
+        "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.05}]}}},
+      "targets": [{"refId": "A", "legendFormat": "5xx ratio",
+        "expr": "sum(rate(envoy_cluster_upstream_rq_xx{envoy_response_code_class=\"5\",envoy_cluster_name=~\"httproute/cac/api-route/.*\"}[5m])) / sum(rate(envoy_cluster_upstream_rq_total{envoy_cluster_name=~\"httproute/cac/api-route/.*\"}[5m]))"}]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "p95 지연 (라우트별)",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ms"}},
+      "targets": [{"refId": "A", "legendFormat": "{{envoy_cluster_name}}",
+        "expr": "histogram_quantile(0.95, sum by (le, envoy_cluster_name) (rate(envoy_cluster_upstream_rq_time_bucket{envoy_cluster_name=~\"httproute/cac/.*\"}[5m])))"}]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "상태 코드 클래스 (req/s)",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"stacking": {"mode": "normal"}}}},
+      "targets": [{"refId": "A", "legendFormat": "{{envoy_response_code_class}}xx",
+        "expr": "sum by (envoy_response_code_class) (rate(envoy_cluster_upstream_rq_xx{envoy_cluster_name=~\"httproute/cac/.*\"}[5m]))"}]
+    }
+  ]
+}

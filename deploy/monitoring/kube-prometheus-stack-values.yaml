@@ -1,0 +1,154 @@
+# kube-prometheus-stack 92.14.0 — 설계: docs/superpowers/specs/2026-10-27-monitoring-design.md
+# 원칙: stateful 컴포넌트는 control-plane 고정, kubeadm localhost 컴포넌트 스크랩 off, 차트 밖 CR도 선택.
+
+# kubeadm은 etcd·scheduler·controller-manager·kube-proxy가 127.0.0.1에만 바인딩 → 스크랩 불가 → TargetDown 가짜 알림.
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+defaultRules:
+  disabled:
+    # worker-1 limit 합계 126%라 상시 발화. 단일 클러스터 과할당은 우리가 알고 쓰는 상태.
+    KubeCPUOvercommit: true
+    KubeMemoryOvercommit: true
+
+prometheusOperator:
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: ""
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    requests:
+      cpu: 50m
+      memory: 50Mi
+    limits:
+      memory: 150Mi
+
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    # PVC가 10Gi — 볼륨이 가득 차면 Prometheus가 crash 하므로 그 전에 용량 기준으로 오래된 블록을 지운다.
+    retentionSize: 8GB
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+    # false = 차트 밖(deploy/monitoring/config)의 PodMonitor·ServiceMonitor·PrometheusRule도 선택.
+    # 기본 true면 release 라벨이 붙은 것만 봐서 우리 CR을 무시한다.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    nodeSelector:
+      node-role.kubernetes.io/control-plane: ""
+    tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+    resources:
+      requests:
+        cpu: 100m
+        memory: 400Mi
+      limits:
+        memory: 900Mi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: ebs-gp3
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+alertmanager:
+  alertmanagerSpec:
+    # OnNamespace(기본)는 AlertmanagerConfig 라우트에 namespace=monitoring matcher를 자동 삽입해
+    # 노드·cac 네임스페이스 알림이 Discord로 안 간다 → None.
+    alertmanagerConfigMatcherStrategy:
+      type: None
+    nodeSelector:
+      node-role.kubernetes.io/control-plane: ""
+    tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+    resources:
+      requests:
+        cpu: 10m
+        memory: 30Mi
+      limits:
+        memory: 100Mi
+
+grafana:
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  grafana.ini:
+    server:
+      root_url: https://grafana.cloudinfra.help
+    users:
+      allow_sign_up: false
+    auth.anonymous:
+      enabled: false
+  persistence:
+    enabled: true
+    storageClassName: ebs-gp3
+    size: 1Gi
+  # sidecar(dashboards·datasources) 2개 — 기본값은 limit 없음
+  sidecar:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 20Mi
+      limits:
+        memory: 100Mi
+  # Loki 데이터소스는 Phase 2(loki Application) 전까지 "연결 실패"로 보이지만 무해. 대시보드 JSON이 uid loki를 참조.
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      access: proxy
+      url: http://loki.monitoring.svc:3100
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: ""
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      memory: 200Mi
+
+kube-state-metrics:
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: ""
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    requests:
+      cpu: 10m
+      memory: 50Mi
+    limits:
+      memory: 100Mi
+
+prometheus-node-exporter:
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    requests:
+      cpu: 10m
+      memory: 30Mi
+    limits:
+      memory: 50Mi
