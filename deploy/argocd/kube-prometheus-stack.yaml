@@ -1,0 +1,31 @@
+# kube-prometheus-stack Application. CRD가 커서 client-side apply의 last-applied 어노테이션 한도(262KB)를
+# 넘으므로 ServerSideApply 필수(없으면 첫 Sync 실패).
+# 첫 등록은 automated 블록을 떼고(수동) diff 확인 후 자동 전환 — deploy/monitoring/README.md 참조.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 92.14.0
+      helm:
+        releaseName: kube-prometheus-stack
+        valueFiles:
+          - $values/deploy/monitoring/kube-prometheus-stack-values.yaml
+    - repoURL: https://github.com/So1ky/Cloud-Automation-Chatbot.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    automated:
+      prune: true
+      selfHeal: true
