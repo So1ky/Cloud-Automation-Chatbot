@@ -26,9 +26,13 @@ cp deploy/monitoring/secrets.example.yaml deploy/monitoring/secrets.yaml   # 값
 kubectl apply -f deploy/monitoring/secrets.yaml
 ```
 
+`secrets.yaml`은 `.gitignore`로 제외되어 있으며 절대 커밋하지 말 것. 웹훅 URL이 유출되면 Discord에서 재발급한다.
+
 ## 1. Phase 1 — 메트릭
 
 등록 순서: `metrics-server` → `kube-prometheus-stack`(Healthy까지 2~3분, CRD 생성) → `monitoring-config`.
+
+`monitoring-config`는 ServiceMonitor/PodMonitor/PrometheusRule/AlertmanagerConfig CR을 담고 있고 이 CRD는 `kube-prometheus-stack`이 만든다. 따라서 그 Application이 Healthy가 된 뒤에만 등록한다. 먼저 등록하면 Sync가 "no matches for kind"로 실패한다.
 
 확인:
 ```bash
@@ -39,11 +43,13 @@ free -m | awk 'NR==2{print "available MB:",$7}'   # 10분 뒤 ≥ 500
 ```
 브라우저 `https://grafana.cloudinfra.help` → admin / secrets.yaml 비밀번호. Dashboards → "CAC / 앱 개요", "CAC / Envoy RED".
 Prometheus 타깃 확인: `kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090` → http://localhost:9090/targets — DOWN 0개.
+Argo 상태 확인: `kubectl -n argocd get applications` — metrics-server, kube-prometheus-stack, monitoring-config 모두 `Synced` / `Healthy`.
 
 ## 2. Phase 2 — 로그
 
 등록 순서: `loki`(Healthy) → `alloy`. 확인: `kubectl -n monitoring logs ds/alloy --tail=20`에 에러 없음,
 Grafana Explore → Loki → `{namespace="cac", container="backend"}`.
+`kubectl -n argocd get applications`에 loki, alloy가 추가로 `Synced` / `Healthy`로 보여야 한다.
 
 ## 3. Phase 3 — 알림 테스트
 
