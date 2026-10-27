@@ -11,6 +11,9 @@
 from __future__ import annotations
 
 import os
+from typing import Callable
+
+from langchain_core.runnables import RunnableConfig
 
 from langgraph.graph import END, START, StateGraph
 
@@ -90,13 +93,24 @@ def build_verify_graph():
     return graph.compile()
 
 
+def _progress_node(node, stage: str, message: str):
+    """기존 노드를 실행하기 전에 해당 요청의 진행 단계 알림을 보낸다."""
+    def run(state: GraphState, config: RunnableConfig):
+        emit = config.get("configurable", {}).get("on_progress")
+        if emit:
+            retry = state.get("retry_count", 0)
+            emit(stage, f"{message} (수정 {retry}회차)" if retry else message)
+        return node(state)
+    return run
+
+
 def build_graph():
     """설계 → 개발 → 검증 (+Self-Healing 루프) 전체 파이프라인 그래프."""
     graph = StateGraph(GraphState)
 
-    graph.add_node("design_agent", design_node)
-    graph.add_node("develop_agent", develop_node)
-    graph.add_node("verify_agent", verify_node)
+    graph.add_node("design_agent", _progress_node(design_node, "design", "아키텍처 설계 중"))
+    graph.add_node("develop_agent", _progress_node(develop_node, "develop", "Terraform 코드 생성 중"))
+    graph.add_node("verify_agent", _progress_node(verify_node, "verify", "검증 중"))
 
     graph.add_edge(START, "design_agent")
     graph.add_edge("design_agent", "develop_agent")
@@ -153,7 +167,11 @@ def run_verify_agent(yaml_output: str, terraform_files: dict) -> dict:
     }
 
 
-def run_pipeline(user_requirements: str, previous_yaml: str | None = None) -> dict:
+def run_pipeline(
+    user_requirements: str,
+    previous_yaml: str | None = None,
+    on_progress: Callable[[str, str], None] | None = None,
+) -> dict:
     """설계 → 개발 → 검증(Self-Healing) 전체 파이프라인을 실행한다.
 
     previous_yaml: 멀티턴 대화에서 직전 턴에 확정된 설계 YAML.
@@ -167,11 +185,13 @@ def run_pipeline(user_requirements: str, previous_yaml: str | None = None) -> di
         _initial_state(
             user_requirements=user_requirements, previous_yaml=previous_yaml or ""
         ),
-        config={"recursion_limit": recursion_limit},
+        config={"recursion_limit": recursion_limit, "configurable": {"on_progress": on_progress}},
     )
 
     # 검증 결과를 사용자용 설명문으로 변환 (다이어그램·코드와 함께 사용자에게 전달)
     print("[리포트] 사용자용 검증 설명문 생성 중...")
+    if on_progress:
+        on_progress("summary", "검증 설명문 생성 중")
     validation_summary = generate_user_summary(
         result["validation_report"],
         result["validation_passed"],
