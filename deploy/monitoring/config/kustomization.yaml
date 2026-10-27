@@ -7,6 +7,8 @@ resources:
   - podmonitor-envoy.yaml
   - servicemonitors.yaml
   - httproute-grafana.yaml
+  - prometheusrule.yaml
+  - alertmanagerconfig.yaml
 configMapGenerator:
   - name: grafana-dashboard-envoy-red
     files:

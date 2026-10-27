@@ -1,0 +1,74 @@
+# 우리 알림 규칙 8개 — 설계 스펙 §6. severity=critical은 즉시, warning은 1시간 묶음(alertmanagerconfig.yaml).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cac-alerts
+spec:
+  groups:
+    - name: cac.node
+      rules:
+        - alert: NodeMemoryLow
+          expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.15
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "노드 {{ $labels.instance }} available 메모리 {{ $value | humanizePercentage }}"
+        - alert: PVCAlmostFull
+          expr: kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes > 0.85
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} 사용률 {{ $value | humanizePercentage }}"
+    - name: cac.app
+      rules:
+        - alert: PodCrashLooping
+          expr: increase(kube_pod_container_status_restarts_total{namespace="cac"}[5m]) >= 3
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} 컨테이너 {{ $labels.container }} 5분간 {{ $value }}회 재시작"
+        - alert: BackendUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="cac", deployment="backend"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "backend Deployment 가용 replica 0 (2분 이상)"
+    - name: cac.gateway
+      rules:
+        - alert: EnvoyHighErrorRate
+          expr: |
+            sum(rate(envoy_cluster_upstream_rq_xx{envoy_response_code_class="5", envoy_cluster_name=~"httproute/cac/api-route/.*"}[5m]))
+              / sum(rate(envoy_cluster_upstream_rq_total{envoy_cluster_name=~"httproute/cac/api-route/.*"}[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "/api 5xx 비율 {{ $value | humanizePercentage }} (5분)"
+        - alert: EnvoyHighLatency
+          # Envoy rq_time 단위는 ms. 챗 요청(2~7분)이 섞이면 p95가 높게 나오므로 1주 관찰 후 임계값·경로 조정.
+          expr: |
+            histogram_quantile(0.95, sum by (le) (rate(envoy_cluster_upstream_rq_time_bucket{envoy_cluster_name=~"httproute/cac/api-route/.*"}[10m]))) > 60000
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "/api p95 지연 {{ $value | humanizeDuration }} (ms 기준 {{ $value }})"
+    - name: cac.platform
+      rules:
+        - alert: CertExpiringSoon
+          expr: (certmanager_certificate_expiration_timestamp_seconds - time()) / 86400 < 14
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "인증서 {{ $labels.name }} 만료 {{ $value | printf \"%.0f\" }}일 전"
+        - alert: ArgoAppNotSynced
+          expr: argocd_app_info{sync_status!="Synced"} == 1 or argocd_app_info{health_status="Degraded"} == 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Argo 앱 {{ $labels.name }} sync={{ $labels.sync_status }} health={{ $labels.health_status }} (15분)"
