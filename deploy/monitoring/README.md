@@ -38,15 +38,14 @@ Grafana admin 비밀번호는 **최초 초기화 때만** `grafana-admin` Secret
 확인:
 ```bash
 kubectl top nodes && kubectl top pods -n cac
-kubectl -n monitoring get pods -o wide            # stateful 파드 전부 control-plane(ip-10-0-1-10), node-exporter 3개
+kubectl -n monitoring get pods -o wide            # node-exporter 3개 빼고 전부 worker-2(ip-10-0-1-12)
 kubectl -n monitoring get pvc                      # prometheus 10Gi, grafana 1Gi Bound
-free -m | awk 'NR==2{print "available MB:",$7}'   # 10분 뒤 ≥ 500
+free -m | awk 'NR==2{print "cp available MB:",$7}'   # 스택은 worker-2에 있으므로 설치 전(≈1700)과 같아야 함
 ```
 브라우저 `https://grafana.cloudinfra.help` → admin / secrets.yaml 비밀번호. Dashboards → "CAC / 앱 개요", "CAC / Envoy RED".
-Prometheus 타깃 확인(control-plane에서 exec, 기대값 `DOWN: 0`):
+Prometheus 타깃 확인(control-plane에서, 기대값 `DOWN: 0`). Prometheus v3 이미지에는 wget·sh가 없어 exec 대신 API 서버의 서비스 proxy로 조회한다:
 ```bash
-kubectl -n monitoring exec sts/prometheus-kube-prometheus-stack-prometheus -c prometheus -- \
-  wget -qO- 'http://localhost:9090/api/v1/targets?state=active' | python3 -c \
+kubectl get --raw '/api/v1/namespaces/monitoring/services/prometheus-operated:9090/proxy/api/v1/targets?state=active' | python3 -c \
   "import json,sys; t=json.load(sys.stdin)['data']['activeTargets']; print({x['scrapePool']: x['health'] for x in t}); print('DOWN:', sum(x['health']!='up' for x in t))"
 ```
 Argo 상태 확인: `kubectl -n argocd get applications` — metrics-server, kube-prometheus-stack, monitoring-config 모두 `Synced` / `Healthy`.
@@ -74,7 +73,8 @@ Grafana Explore → Loki → `{namespace="cac", container="backend"}`.
 
 - 클러스터를 꺼두면 모니터링도 꺼진다. PVC는 남아 cac-up 후 그래프가 이어진다.
 - 가짜 알림이 보이면 `kube-prometheus-stack-values.yaml`의 `defaultRules.disabled`에 이름 추가 → PR.
-- Prometheus·Alertmanager·Loki UI는 비공개. 상태 확인은 위처럼 `kubectl exec` + wget.
+- 스택은 worker-2 고정. control-plane에 뒀더니 kube-apiserver(실사용 1.3GB)와 겹쳐 MemAvailable 200MB → 노드 전체 스래싱으로 scheduler·controller-manager까지 CrashLoop(2026-10-27). worker-2 교체 시 values의 `kubernetes.io/hostname` 수정.
+- Prometheus·Alertmanager·Loki UI는 비공개. 상태 확인은 위처럼 `kubectl get --raw` 서비스 proxy(`.../services/<svc>:<port>/proxy/...`).
   브라우저가 필요하면 노트북에서 `aws ssm start-session --target <control-plane 인스턴스 ID> --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["9090"],"localPortNumber":["9090"]}'` 로 포워딩한 뒤,
   control-plane에서 `kubectl -n monitoring port-forward --address 0.0.0.0 svc/kube-prometheus-stack-prometheus 9090`.
 - 메모리가 1.3GB를 넘으면 values에서 `retention: 5d`, `scrapeInterval: 60s`로 하향.
