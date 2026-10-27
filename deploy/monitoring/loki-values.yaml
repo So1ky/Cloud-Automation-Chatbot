@@ -44,6 +44,11 @@ singleBinary:
     limits:
       memory: 400Mi
 
+# 룰 사이드카 비활성화 — Loki 룰을 쓰지 않고, 켜 두면 클러스터 전체 configmaps/secrets 읽기 권한이 ClusterRole에 생긴다.
+sidecar:
+  rules:
+    enabled: false
+
 backend:
   replicas: 0
 read:

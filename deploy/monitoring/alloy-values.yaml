@@ -1,4 +1,6 @@
-# alloy 1.14.3 — DaemonSet. 각 노드의 Alloy가 자기 노드 파드 로그만 kubelet API로 읽어 Loki로 보낸다(호스트 경로 마운트 없음).
+# alloy 1.14.3 — DaemonSet. 각 노드의 Alloy가 자기 노드 파드 로그만 Loki로 보낸다(호스트 경로 마운트 없음).
+# loki.source.kubernetes는 kubelet이 아니라 **API server의 pods/log 엔드포인트**로 로그를 읽으므로,
+# 로그 스트림 부하는 control-plane의 kube-apiserver에 걸린다.
 # 차트가 HOSTNAME 환경변수에 spec.nodeName을 넣어 주므로 그걸로 노드 필터링.
 controller:
   type: daemonset

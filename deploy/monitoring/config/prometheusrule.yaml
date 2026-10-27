@@ -8,12 +8,14 @@ spec:
     - name: cac.node
       rules:
         - alert: NodeMemoryLow
-          expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.15
+          # 절대값 임계: control-plane이 모니터링 스택을 일부러 떠안아 available이 ~500MB로 운영되므로,
+          # 비율 15%(t3.medium 기준 ~580MB)는 상시 firing 된다.
+          expr: node_memory_MemAvailable_bytes < 300 * 1024 * 1024
           for: 10m
           labels:
             severity: critical
           annotations:
-            summary: "노드 {{ $labels.instance }} available 메모리 {{ $value | humanizePercentage }}"
+            summary: "노드 {{ $labels.instance }} available 메모리 {{ $value | humanize1024 }}B (임계 300MiB)"
         - alert: PVCAlmostFull
           expr: kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes > 0.85
           for: 10m
@@ -28,7 +30,7 @@ spec:
           labels:
             severity: critical
           annotations:
-            summary: "{{ $labels.namespace }}/{{ $labels.pod }} 컨테이너 {{ $labels.container }} 5분간 {{ $value }}회 재시작"
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} 컨테이너 {{ $labels.container }} 5분간 {{ $value | printf \"%.0f\" }}회 재시작"
         - alert: BackendUnavailable
           expr: kube_deployment_status_replicas_available{namespace="cac", deployment="backend"} == 0
           for: 2m
@@ -48,14 +50,15 @@ spec:
           annotations:
             summary: "/api 5xx 비율 {{ $value | humanizePercentage }} (5분)"
         - alert: EnvoyHighLatency
-          # Envoy rq_time 단위는 ms. 챗 요청(2~7분)이 섞이면 p95가 높게 나오므로 1주 관찰 후 임계값·경로 조정.
+          # Envoy rq_time 단위는 ms. /api의 챗 요청은 정상적으로 2~7분 걸리고, 라우트 규칙이 하나뿐이라
+          # cluster 이름으로 제외할 수 없다. 8분은 Envoy 요청 타임아웃(600s) 아래 값. 1주 관찰 후 재조정.
           expr: |
-            histogram_quantile(0.95, sum by (le) (rate(envoy_cluster_upstream_rq_time_bucket{envoy_cluster_name=~"httproute/cac/api-route/.*"}[10m]))) > 60000
+            histogram_quantile(0.95, sum by (le) (rate(envoy_cluster_upstream_rq_time_bucket{envoy_cluster_name=~"httproute/cac/api-route/.*"}[10m]))) > 480000
           for: 10m
           labels:
             severity: warning
           annotations:
-            summary: "/api p95 지연 {{ $value | humanize }}ms (임계 60000ms)"
+            summary: "/api p95 지연 {{ $value | printf \"%.0f\" }}ms (임계 480000ms)"
     - name: cac.platform
       rules:
         - alert: CertExpiringSoon

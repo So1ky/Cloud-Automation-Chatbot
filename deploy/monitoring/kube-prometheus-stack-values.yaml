@@ -34,6 +34,8 @@ prometheusOperator:
 prometheus:
   prometheusSpec:
     retention: 7d
+    # PVC가 10Gi — 볼륨이 가득 차면 Prometheus가 crash 하므로 그 전에 용량 기준으로 오래된 블록을 지운다.
+    retentionSize: 8GB
     scrapeInterval: 30s
     evaluationInterval: 30s
     # false = 차트 밖(deploy/monitoring/config)의 PodMonitor·ServiceMonitor·PrometheusRule도 선택.
@@ -97,6 +99,14 @@ grafana:
     enabled: true
     storageClassName: ebs-gp3
     size: 1Gi
+  # sidecar(dashboards·datasources) 2개 — 기본값은 limit 없음
+  sidecar:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 20Mi
+      limits:
+        memory: 100Mi
   # Loki 데이터소스는 Phase 2(loki Application) 전까지 "연결 실패"로 보이지만 무해. 대시보드 JSON이 uid loki를 참조.
   additionalDataSources:
     - name: Loki
