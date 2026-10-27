@@ -1,0 +1,28 @@
+# Alloy(로그 수집 DaemonSet) Application. loki가 Healthy 된 뒤 등록.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: alloy
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: alloy
+      targetRevision: 1.14.3
+      helm:
+        releaseName: alloy
+        valueFiles:
+          - $values/deploy/monitoring/alloy-values.yaml
+    - repoURL: https://github.com/So1ky/Cloud-Automation-Chatbot.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    automated:
+      prune: true
+      selfHeal: true

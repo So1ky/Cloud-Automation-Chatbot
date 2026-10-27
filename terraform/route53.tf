@@ -37,3 +37,12 @@ resource "aws_route53_record" "argocd" {
   ttl     = 300
   records = [var.domain_name]
 }
+
+# Grafana UI 진입점. argocd와 같은 이유로 apex CNAME.
+resource "aws_route53_record" "grafana" {
+  zone_id = aws_route53_zone.main.zone_id
+  name    = "grafana.${var.domain_name}"
+  type    = "CNAME"
+  ttl     = 300
+  records = [var.domain_name]
+}

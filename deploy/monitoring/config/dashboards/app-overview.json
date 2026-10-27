@@ -1,0 +1,77 @@
+{
+  "uid": "cac-app-overview",
+  "title": "CAC / 앱 개요",
+  "tags": ["cac"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "time": {"from": "now-6h", "to": "now"},
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "파드 메모리 (cac, working set)",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "bytes"}},
+      "targets": [
+        {"refId": "A", "legendFormat": "{{pod}}",
+         "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"cac\", container!=\"\"})"},
+        {"refId": "B", "legendFormat": "request {{pod}}",
+         "expr": "sum by (pod) (kube_pod_container_resource_requests{namespace=\"cac\", resource=\"memory\"})"}
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "파드 CPU (cac, cores)",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "legendFormat": "{{pod}}",
+        "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"cac\", container!=\"\"}[5m]))"}]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "노드 available 메모리",
+      "gridPos": {"x": 0, "y": 8, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "bytes"}},
+      "targets": [{"refId": "A", "legendFormat": "{{instance}}", "expr": "node_memory_MemAvailable_bytes"}]
+    },
+    {
+      "id": 4, "type": "stat", "title": "컨테이너 재시작 (1h, cac)",
+      "gridPos": {"x": 8, "y": 8, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "legendFormat": "{{pod}}",
+        "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace=\"cac\"}[1h]))"}]
+    },
+    {
+      "id": 5, "type": "gauge", "title": "PVC 사용률",
+      "gridPos": {"x": 16, "y": 8, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1,
+        "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 0.7}, {"color": "red", "value": 0.85}]}}},
+      "targets": [{"refId": "A", "legendFormat": "{{namespace}}/{{persistentvolumeclaim}}",
+        "expr": "kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes"}]
+    },
+    {
+      "id": 6, "type": "table", "title": "Argo CD 앱 상태",
+      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 6},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "format": "table", "instant": true,
+        "expr": "argocd_app_info"}],
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "Value": true, "instance": true, "job": true, "pod": true, "service": true, "endpoint": true, "container": true, "autosync_enabled": true, "dest_server": true, "dest_namespace": true, "repo": true, "project": true}}}]
+    },
+    {
+      "id": 7, "type": "stat", "title": "인증서 만료까지 (일)",
+      "gridPos": {"x": 12, "y": 16, "w": 12, "h": 6},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "d", "decimals": 0,
+        "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 14}, {"color": "green", "value": 30}]}}},
+      "targets": [{"refId": "A", "legendFormat": "{{name}}",
+        "expr": "(certmanager_certificate_expiration_timestamp_seconds - time()) / 86400"}]
+    },
+    {
+      "id": 8, "type": "logs", "title": "backend 최근 에러 로그 (Loki, Phase 2부터)",
+      "gridPos": {"x": 0, "y": 22, "w": 24, "h": 10},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
+      "targets": [{"refId": "A", "expr": "{namespace=\"cac\", container=\"backend\"} |~ \"(?i)error|traceback|exception\""}]
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+# Argo CD: application-controller(8082)·server(8083)·repo-server(8084) 메트릭 서비스. 포트명은 모두 metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd
+spec:
+  namespaceSelector:
+    matchNames: [argocd]
+  selector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [argocd-metrics, argocd-server-metrics, argocd-repo-server]
+  endpoints:
+    - port: metrics
+      interval: 30s
+---
+# cert-manager 컨트롤러(9402) — certmanager_certificate_expiration_timestamp_seconds
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cert-manager
+spec:
+  namespaceSelector:
+    matchNames: [cert-manager]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cert-manager
+  endpoints:
+    - port: http-metrics
+      interval: 60s
