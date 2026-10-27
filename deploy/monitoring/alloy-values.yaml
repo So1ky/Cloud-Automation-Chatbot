@@ -1,0 +1,63 @@
+# alloy 1.14.3 — DaemonSet. 각 노드의 Alloy가 자기 노드 파드 로그만 kubelet API로 읽어 Loki로 보낸다(호스트 경로 마운트 없음).
+# 차트가 HOSTNAME 환경변수에 spec.nodeName을 넣어 주므로 그걸로 노드 필터링.
+controller:
+  type: daemonset
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+
+alloy:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      memory: 200Mi
+  configMap:
+    content: |
+      discovery.kubernetes "pods" {
+        role = "pod"
+        selectors {
+          role  = "pod"
+          field = "spec.nodeName=" + sys.env("HOSTNAME")
+        }
+      }
+
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+
+        // 수집 대상 네임스페이스만 keep (kube-system 제외로 용량 절약)
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "cac|argocd|monitoring|envoy-gateway-system|cert-manager"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app"]
+          target_label  = "app"
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.monitoring.svc:3100/loki/api/v1/push"
+        }
+      }
