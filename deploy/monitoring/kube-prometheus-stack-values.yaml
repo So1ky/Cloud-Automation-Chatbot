@@ -1,5 +1,7 @@
 # kube-prometheus-stack 92.14.0 — 설계: docs/superpowers/specs/2026-10-27-monitoring-design.md
-# 원칙: stateful 컴포넌트는 control-plane 고정, kubeadm localhost 컴포넌트 스크랩 off, 차트 밖 CR도 선택.
+# 원칙: 모니터링 컴포넌트는 worker-2(ip-10-0-1-12) 고정, kubeadm localhost 컴포넌트 스크랩 off, 차트 밖 CR도 선택.
+# worker-2 고정 이유(2026-10-27 실측): control-plane은 kube-apiserver 실사용 1.3GB 등 바닥이 2.6GB라 스택을 올리자
+# MemAvailable 200MB까지 떨어져 scheduler·controller-manager까지 CrashLoop. 노드 역할 라벨이 없어 hostname으로 고정.
 
 # kubeadm은 etcd·scheduler·controller-manager·kube-proxy가 127.0.0.1에만 바인딩 → 스크랩 불가 → TargetDown 가짜 알림.
 kubeEtcd:
@@ -19,11 +21,7 @@ defaultRules:
 
 prometheusOperator:
   nodeSelector:
-    node-role.kubernetes.io/control-plane: ""
-  tolerations:
-    - key: node-role.kubernetes.io/control-plane
-      operator: Exists
-      effect: NoSchedule
+    kubernetes.io/hostname: ip-10-0-1-12
   resources:
     requests:
       cpu: 50m
@@ -44,11 +42,7 @@ prometheus:
     podMonitorSelectorNilUsesHelmValues: false
     ruleSelectorNilUsesHelmValues: false
     nodeSelector:
-      node-role.kubernetes.io/control-plane: ""
-    tolerations:
-      - key: node-role.kubernetes.io/control-plane
-        operator: Exists
-        effect: NoSchedule
+      kubernetes.io/hostname: ip-10-0-1-12
     resources:
       requests:
         cpu: 100m
@@ -71,11 +65,7 @@ alertmanager:
     alertmanagerConfigMatcherStrategy:
       type: None
     nodeSelector:
-      node-role.kubernetes.io/control-plane: ""
-    tolerations:
-      - key: node-role.kubernetes.io/control-plane
-        operator: Exists
-        effect: NoSchedule
+      kubernetes.io/hostname: ip-10-0-1-12
     resources:
       requests:
         cpu: 10m
@@ -99,14 +89,14 @@ grafana:
     enabled: true
     storageClassName: ebs-gp3
     size: 1Gi
-  # sidecar(dashboards·datasources) 2개 — 기본값은 limit 없음
+  # sidecar(dashboards·datasources) 2개 — 기본값은 limit 없음. k8s-sidecar 2.14.1은 기동 시 anon-rss 101MB(100Mi면 OOMKilled, 실측).
   sidecar:
     resources:
       requests:
         cpu: 10m
-        memory: 20Mi
+        memory: 64Mi
       limits:
-        memory: 100Mi
+        memory: 160Mi
   # Loki 데이터소스는 Phase 2(loki Application) 전까지 "연결 실패"로 보이지만 무해. 대시보드 JSON이 uid loki를 참조.
   additionalDataSources:
     - name: Loki
@@ -115,25 +105,18 @@ grafana:
       access: proxy
       url: http://loki.monitoring.svc:3100
   nodeSelector:
-    node-role.kubernetes.io/control-plane: ""
-  tolerations:
-    - key: node-role.kubernetes.io/control-plane
-      operator: Exists
-      effect: NoSchedule
+    kubernetes.io/hostname: ip-10-0-1-12
+  # Grafana 13.2.4는 기동만으로 ~200Mi(200Mi 한도에서 못 뜸, 실측) → 400Mi
   resources:
     requests:
       cpu: 50m
-      memory: 100Mi
-    limits:
       memory: 200Mi
+    limits:
+      memory: 400Mi
 
 kube-state-metrics:
   nodeSelector:
-    node-role.kubernetes.io/control-plane: ""
-  tolerations:
-    - key: node-role.kubernetes.io/control-plane
-      operator: Exists
-      effect: NoSchedule
+    kubernetes.io/hostname: ip-10-0-1-12
   resources:
     requests:
       cpu: 10m
@@ -142,6 +125,7 @@ kube-state-metrics:
       memory: 100Mi
 
 prometheus-node-exporter:
+  # DaemonSet — control-plane에도 떠야 하므로 toleration 유지
   tolerations:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists

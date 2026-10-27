@@ -1,4 +1,5 @@
 # loki 7.5.0 — 단일 바이너리, 로컬 파일시스템, 7일 보존. 분산 모드 컴포넌트·캐시·게이트웨이·canary 전부 off.
+# 배치는 worker-2 고정(이유는 kube-prometheus-stack-values.yaml 머리말).
 deploymentMode: SingleBinary
 
 loki:
@@ -32,11 +33,7 @@ singleBinary:
     size: 10Gi
     storageClass: ebs-gp3
   nodeSelector:
-    node-role.kubernetes.io/control-plane: ""
-  tolerations:
-    - key: node-role.kubernetes.io/control-plane
-      operator: Exists
-      effect: NoSchedule
+    kubernetes.io/hostname: ip-10-0-1-12
   resources:
     requests:
       cpu: 50m
