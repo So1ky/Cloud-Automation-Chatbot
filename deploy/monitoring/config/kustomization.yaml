@@ -1,0 +1,20 @@
+# 우리 관측 대상(CR)과 Grafana 공개 라우트. 차트 values(스택 설정)와 분리.
+# Grafana sidecar가 라벨 grafana_dashboard=1 ConfigMap을 전 네임스페이스에서 자동 로드한다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+resources:
+  - podmonitor-envoy.yaml
+  - servicemonitors.yaml
+  - httproute-grafana.yaml
+configMapGenerator:
+  - name: grafana-dashboard-envoy-red
+    files:
+      - dashboards/envoy-red.json
+  - name: grafana-dashboard-app-overview
+    files:
+      - dashboards/app-overview.json
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"

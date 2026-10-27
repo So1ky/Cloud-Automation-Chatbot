@@ -1,0 +1,16 @@
+# Envoy 프록시는 Service에 메트릭 포트가 없어 PodMonitor로 파드 포트(metrics, 19001)를 직접 긁는다.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: envoy-gateway-proxy
+spec:
+  namespaceSelector:
+    matchNames: [envoy-gateway-system]
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: proxy
+      gateway.envoyproxy.io/owning-gateway-name: cac-gateway
+  podMetricsEndpoints:
+    - port: metrics
+      path: /stats/prometheus
+      interval: 30s

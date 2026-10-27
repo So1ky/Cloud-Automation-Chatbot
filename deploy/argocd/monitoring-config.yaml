@@ -1,0 +1,20 @@
+# 우리 관측 대상(PodMonitor·ServiceMonitor·PrometheusRule·AlertmanagerConfig·대시보드)과 Grafana HTTPRoute.
+# kube-prometheus-stack이 Healthy(CRD 생성) 된 뒤 등록할 것 — 먼저 등록하면 CRD 없음으로 Sync 실패.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring-config
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/So1ky/Cloud-Automation-Chatbot.git
+    targetRevision: main
+    path: deploy/monitoring/config
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
