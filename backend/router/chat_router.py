@@ -1,10 +1,13 @@
 from typing import List, Optional
+import threading
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 import logging
-from backend.database.config import get_db
+from backend.database.config import get_db, SessionLocal
+from backend.service.chat_stream import ChatStream
 from backend.database.models import ChatHistory
 from backend.schema.chat_schema import (
     ChatHistoryItemResponse,
@@ -111,6 +114,73 @@ def handle_chat(
         "validation_summary": chat_history.validation_summary,
         "cost_estimate": chat_history.cost_estimate,
     }
+
+
+@router.post("/stream")
+async def stream_chat(
+    req: ChatRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(user_service.get_current_user_optional),
+):
+    if not req.requirements.strip():
+        raise HTTPException(status_code=400, detail="requirements가 비어 있습니다.")
+    previous = (
+        _resolve_previous_turn(db, req.conversation_id, current_user)
+        if req.conversation_id is not None else None
+    )
+    previous_yaml = previous.yaml_output if previous else None
+    user_id = previous.user_id if previous else (current_user.id if current_user else None)
+    # 의존성으로 받은 DB 세션은 작업 스레드와 공유하지 않고 조회 트랜잭션을 종료한다.
+    db.rollback()
+    stream = ChatStream()
+
+    def work():
+        try:
+            result = design(req, previous_yaml=previous_yaml, on_progress=stream.progress)
+            if stream.closed.is_set():
+                return
+            stream.progress("diagram", "다이어그램 생성 중")
+            image = None
+            warning = None
+            try:
+                image = generate_diagram(result.diagram_yaml)
+            except Exception:
+                logger.exception("Diagram generation failed")
+                warning = "다이어그램 생성에 실패했습니다. AI 결과는 저장되었습니다."
+            if stream.closed.is_set():
+                return
+            stream.progress("save", "결과 저장 중")
+            with SessionLocal() as session:
+                chat = ChatHistory(
+                    user_id=user_id, conversation_id=req.conversation_id,
+                    requirements=req.requirements,
+                    response_message=warning or "성공적으로 생성되었습니다.",
+                    image_url=image, terraform_code=result.terraform_files,
+                    validation_summary=result.validation_summary,
+                    cost_estimate=result.cost_estimate, yaml_output=result.yaml_output,
+                )
+                session.add(chat)
+                session.flush()
+                if chat.conversation_id is None:
+                    chat.conversation_id = chat.id
+                payload = {"chat_id": chat.id, "conversation_id": chat.conversation_id,
+                           "message": chat.response_message, "warning": warning,
+                           "status": "success", "image_url": image,
+                           "terraform_code": result.terraform_files,
+                           "validation_summary": result.validation_summary,
+                           "cost_estimate": result.cost_estimate}
+                session.commit()
+            stream.emit("done", payload)
+        except Exception:
+            logger.exception("Streaming chat failed")
+            stream.emit("error", {"message": "요청 처리에 실패했습니다. 대화 내역을 확인한 뒤 다시 시도해 주세요."})
+
+    # 기존 동기 파이프라인은 강제로 취소할 수 없다. 연결이 끊기면 현재 호출이 끝난 후
+    # 종료 여부를 확인하여 다이어그램 생성과 저장을 건너뛴다.
+    threading.Thread(target=work, daemon=True).start()
+    return StreamingResponse(stream.events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache, no-transform",
+                                      "X-Accel-Buffering": "no"})
 
 
 @router.get("/history", response_model=List[ChatHistoryItemResponse])
