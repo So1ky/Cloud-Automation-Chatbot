@@ -55,7 +55,7 @@ spec:
           labels:
             severity: warning
           annotations:
-            summary: "/api p95 지연 {{ $value | humanizeDuration }} (ms 기준 {{ $value }})"
+            summary: "/api p95 지연 {{ $value | humanize }}ms (임계 60000ms)"
     - name: cac.platform
       rules:
         - alert: CertExpiringSoon
