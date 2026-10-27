@@ -240,6 +240,7 @@ e2e_output/
 
 # k8s Secret 실값 (커밋 금지)
 deploy/k8s/secrets.yaml
+deploy/monitoring/secrets.yaml
 
 # 설계/계획 문서 (로컬 전용 — 커밋하지 않음)
 docs/superpowers/
