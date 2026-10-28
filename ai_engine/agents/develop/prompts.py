@@ -217,9 +217,15 @@ Generate exactly 4 Terraform files:
     aws_acm_certificate_validation.<name>.certificate_arn, ssl_policy =
     "ELBSecurityPolicy-TLS13-1-2-2021-06") and an :80 listener that only redirects to
     HTTPS; SG ingress 80 and 443
-  - otherwise (no dns, or the dns record targets CloudFront/another service) → a single
-    HTTP :80 listener and SG ingress ONLY on 80. NEVER reuse a us-east-1 CloudFront
-    certificate on an ALB — ALB certificates must be in the ALB's region.
+  - the ALB is a CloudFront origin (dns targets CloudFront) → HTTP :80 listener, and the
+    ALB SG ingress :80 ONLY from the CloudFront origin-facing managed prefix list, never
+    0.0.0.0/0: data "aws_ec2_managed_prefix_list" "cloudfront" { name =
+    "com.amazonaws.global.cloudfront.origin-facing" } and prefix_list_ids =
+    [data.aws_ec2_managed_prefix_list.cloudfront.id] on the rule. NEVER reuse a us-east-1
+    CloudFront certificate on an ALB — ALB certificates must be in the ALB's region.
+  - no domain anywhere in the spec → no ACM certificate can be validated, so a single
+    HTTP :80 listener and SG ingress ONLY on 80; add a comment on the listener that TLS
+    requires a domain and should be enabled before production.
 - outputs.tf must reference aws_lb.<name>.dns_name, NOT aws_alb.<name>.dns_name
 - Respect the spec's internal flag:
   - internal: true  → aws_lb with internal = true, subnets = PRIVATE subnets
@@ -358,7 +364,8 @@ Generate exactly 4 Terraform files:
   DB/cache/OpenSearch tier ← app security group only (the DB port). Use a CIDR source only
   when there is no upstream security group (e.g. VPN users reaching an internal EC2 with
   no ALB) — then use variable "allowed_cidr" (description: corporate/VPN CIDR), not the
-  whole VPC CIDR and never 0.0.0.0/0 except ALB :80/:443 on an internet-facing ALB.
+  whole VPC CIDR and never 0.0.0.0/0 except :80/:443 on an internet-facing ALB that is
+  itself the public entry point (not a CloudFront origin — see ALB Rule).
 - IAM policies: Resource must be the specific ARNs (aws_s3_bucket.x.arn and "${...arn}/*",
   aws_sqs_queue.x.arn, aws_dynamodb_table.x.arn, aws_sns_topic.x.arn, the EC2 instance ARN
   for ec2:StartInstances/StopInstances). Resource = "*" ONLY for actions that have no
