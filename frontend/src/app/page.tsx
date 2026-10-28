@@ -5,6 +5,7 @@ import ChatArea from "@/components/ChatArea";
 import AuthModal from "@/components/AuthModal";
 import ToastContainer, { ToastItem, ToastType } from "@/components/Toast";
 import { apiFetch, toUserMessage, ApiError } from "@/lib/api";
+import { streamChat } from "@/lib/sse";
 
 export interface CostEstimate {
   skipped?: boolean;
@@ -60,6 +61,8 @@ export default function Home() {
   >(null);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [progressMessage, setProgressMessage] = useState("");
+  const activeRequest = useRef<AbortController | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [healthStatus, setHealthStatus] = useState<"ok" | "error" | "loading">(
     "loading",
@@ -115,6 +118,7 @@ export default function Home() {
   };
 
   const loadConversation = async (conversationId: number) => {
+    if (activeRequest.current) return;
     setIsHistoryLoading(true);
 
     try {
@@ -155,6 +159,7 @@ export default function Home() {
   };
 
   const startNewChat = () => {
+    if (activeRequest.current) return;
     setSelectedConversationId(null);
     setMessages([initialMessage()]);
     setInputValue("");
@@ -187,7 +192,7 @@ export default function Home() {
   // 실제 요구사항 전송 (신규 전송 + 재시도 공용)
   const sendRequirement = async (requirement: string) => {
     const text = requirement.trim();
-    if (!text || isLoading) return;
+    if (!text || activeRequest.current || isHistoryLoading) return;
 
     lastRequirement.current = text;
 
@@ -202,47 +207,43 @@ export default function Home() {
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
 
-    try {
-      const response = await apiFetch("/api/chat/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requirements: text,
-          conversation_id: selectedConversationId,
-        }),
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    setProgressMessage("요청 준비 중");
+    const botId = `${userMessage.id}-bot`;
+    const updateBot = (patch: Partial<Message>) => {
+      setMessages((prev) => {
+        if (prev.some((message) => message.id === botId)) {
+          return prev.map((message) => message.id === botId ? { ...message, ...patch } : message);
+        }
+        return [...prev, { id: botId, role: "bot", text: "", timestamp: new Date(), ...patch }];
       });
-
-      const data = await response.json();
-      const botMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "bot",
-        text: data.message || "생성이 완료되었습니다.",
-        imageUrl: data.image_url || undefined,
-        terraformCode: data.terraform_code || undefined,
-        validationSummary: data.validation_summary || undefined,
-        costEstimate: data.cost_estimate || undefined,
-        timestamp: new Date(),
-      };
-
-      setMessages((prev) => [...prev, botMessage]);
-      if (typeof data.conversation_id === "number")
-        setSelectedConversationId(data.conversation_id);
-
-      if (currentUser) {
-        await loadChatHistory();
-      }
+    };
+    try {
+      await streamChat({ requirements: text, conversation_id: selectedConversationId }, (event, data) => {
+        if (event === "progress") setProgressMessage(String(data.message));
+        if (event === "done") {
+          updateBot({
+            text: String(data.message || "생성이 완료되었습니다."),
+            imageUrl: (data.image_url as string | null) || undefined,
+            terraformCode: data.terraform_code as Record<string, string>,
+            validationSummary: data.validation_summary as string,
+            costEstimate: data.cost_estimate as CostEstimate | undefined,
+          });
+          setSelectedConversationId(data.conversation_id as number);
+          if (data.warning) pushToast(String(data.warning));
+        }
+      }, controller.signal);
+      if (currentUser) await loadChatHistory();
     } catch (error) {
       console.error("Error:", error);
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "bot",
+      updateBot({
         text: toUserMessage(error, "생성 중 오류가 발생했습니다."),
         isError: true,
-        timestamp: new Date(),
-      };
-      // 실패해도 대화 유지 — conversationId가 남아 있어 재시도 시 같은 대화로 재전송
-      setMessages((prev) => [...prev, errorMessage]);
+      });
     } finally {
+      activeRequest.current = null;
+      setProgressMessage("");
       setIsLoading(false);
     }
   };
@@ -264,6 +265,7 @@ export default function Home() {
   };
 
   const handleLogout = async () => {
+    if (activeRequest.current) return;
     try {
       await apiFetch("/api/user/logout", { method: "POST" });
     } catch (error) {
@@ -292,6 +294,7 @@ export default function Home() {
       <ChatArea
         messages={messages}
         isLoading={isLoading}
+        progressMessage={progressMessage}
         isHistoryLoading={isHistoryLoading}
         healthStatus={healthStatus}
         inputValue={inputValue}
