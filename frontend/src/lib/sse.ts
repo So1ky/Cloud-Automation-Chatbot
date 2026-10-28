@@ -64,7 +64,10 @@ export async function streamChat(
     }
     await consumeSSE(response.body, (event, data) => {
       if (event === "error") {
-        throw new Error(String(data.message || "생성 중 오류가 발생했습니다."));
+        const message = String(data.message || "생성 중 오류가 발생했습니다.");
+        // 백엔드가 상태 코드를 보내면 toUserMessage()의 상태 코드 매핑(502/504 등)을 그대로 탄다
+        const status = typeof data.status === "number" ? data.status : null;
+        throw status ? new ApiError("http", message, status, message) : new Error(message);
       }
       if (event === "done") completed = true;
       onEvent(event, data);
