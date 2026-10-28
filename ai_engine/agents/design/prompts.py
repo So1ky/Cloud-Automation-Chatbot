@@ -35,13 +35,16 @@ Subnet assignment rules:
 Auto Scaling rules:
 11. auto_scaling.target must EXACTLY match the name field of one of the compute resources defined in the compute list.
     Example: if compute name is "AppServer", then auto_scaling target must be "AppServer", not a port number.
-12. Always include load_balancer when auto_scaling is enabled or compute count > 1.
+12. Include load_balancer ONLY when auto_scaling is enabled or compute count > 1.
+    A single EC2 instance does NOT need an ALB — it only adds cost. Omit load_balancer in that case.
 
 Security Group rules:
 13. When external access is needed (e.g. public-facing web service), create SEPARATE security groups:
     - One for the ALB (source: "0.0.0.0/0", ports 80/443) for external traffic
     - One for internal compute/DB resources (source: VPC CIDR e.g. "10.0.0.0/16") for internal traffic
-14. When the user mentions security, internal system, or private-only access, set ALL security group sources to VPC CIDR and include waf=true and guard_duty=true in security section.
+14. When the user mentions security, internal system, or private-only access, set ALL security group sources to VPC CIDR.
+    waf=true ONLY for an internet-facing ALB or CloudFront (WAF cannot protect an internal-only service).
+    guard_duty=true ONLY when the user explicitly asks for threat detection / account-level security monitoring (see rule 30).
 
 Service placement rules:
 15. Always include database section when the workload clearly needs persistent data storage (e.g. ERP, web app, backend server).
@@ -50,8 +53,24 @@ Service placement rules:
     Do NOT add api_gateway when compute includes ECS, EKS, EC2, or Fargate with a load_balancer.
     For ECS/EKS + ALB architectures, traffic flows CloudFront → ALB directly. No API Gateway needed.
 18. Use streaming for real-time data pipelines (Kinesis), messaging for async tasks (SQS/SNS).
-19. Always set multi_az: true for database when high availability is required.
+19. Set multi_az: true for database ONLY when the user explicitly requires high availability,
+    zero downtime, or disaster recovery. Otherwise keep multi_az: false (it doubles RDS cost).
 20. Always choose cost-efficient instance types unless the user specifies otherwise.
+
+Cost constraint rules:
+31. When the user mentions a tight budget, cost saving, "비용 절감", "예산", "저렴하게", or similar:
+    - Use the smallest viable instance/instance_class (e.g. t3.micro, db.t3.micro).
+    - Keep database multi_az: false and auto_scaling min_capacity at 1.
+    - Prefer a single NAT Gateway; do NOT add WAF, GuardDuty, CloudFront, or ElastiCache
+      unless the user explicitly asks for them.
+32. When the user asks for a run schedule (stop servers at night, business-hours-only operation,
+    "야간에는 서버를 꺼", "업무 시간에만"):
+    - Implement it with ONE Lambda (compute, type: Lambda, subnets: null) that starts/stops the EC2
+      instances, triggered by EventBridge (messaging, type: EventBridge) on a cron schedule in Asia/Seoul.
+    - This is the ONLY addition for scheduling. Do NOT add other resources to compensate,
+      and do NOT silently drop the requirement.
+33. If a requirement cannot be expressed with this schema at all, design the minimal architecture
+    that satisfies the expressible requirements — never add or enlarge resources to compensate.
 
 Frontend/Static file optimization rules:
 21. When the user mentions React, Vue, Angular, Next.js, or any SPA/frontend framework:
