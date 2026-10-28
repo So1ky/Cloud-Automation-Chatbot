@@ -69,6 +69,19 @@ Generate exactly 4 Terraform files:
     sensitive   = true
   }
 
+## Auto Scaling Rule (EC2)
+- When the spec includes auto_scaling whose target is an EC2 compute resource, that compute
+  resource is realized ONLY as a launch template + Auto Scaling group.
+  NEVER generate a standalone aws_instance for the same compute resource — the ASG launches the
+  instances. Generating both doubles the fleet and the cost.
+  1. aws_launch_template — image_id, instance_type (var), vpc_security_group_ids, user_data if needed
+  2. aws_autoscaling_group — min_size/max_size/desired_capacity from spec,
+     vpc_zone_identifier = the compute subnets, target_group_arns = the ALB target group,
+     launch_template { id = aws_launch_template.<name>.id, version = "$Latest" }
+  3. aws_autoscaling_policy — policy_type = "TargetTrackingScaling" with
+     predefined_metric_type = "ASGAverageCPUUtilization" and target_value from spec
+- Use aws_instance only for EC2 compute resources that have NO auto_scaling entry.
+
 ## Auto Scaling Rule (ECS)
 - When the spec includes auto_scaling for an ECS service, ALWAYS generate these 3 resources together:
   1. aws_appautoscaling_target — registers the ECS service as a scalable target
