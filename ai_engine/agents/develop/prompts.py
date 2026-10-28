@@ -286,6 +286,9 @@ Generate exactly 4 Terraform files:
 - Without task-level cpu/memory, AWS will reject the task definition.
 
 ## RDS Rule
+- engine_version: NEVER pin a major that is in RDS Extended Support — it adds a per-vCPU-hour fee
+  (~$146/month even on db.t3.micro). Do NOT use MySQL "5.7" or "8.0", or PostgreSQL 11/12/13.
+  Use MySQL "8.4" or PostgreSQL "16"/"17" (or omit engine_version to take the current default).
 - aws_db_instance ALWAYS requires allocated_storage (in GB):
   allocated_storage = 20
 
@@ -383,6 +386,10 @@ Generate exactly 4 Terraform files:
   "us-east-1" }, aws_acm_certificate with provider = aws.us_east_1 + DNS validation).
   Without a certificate, do NOT create the Route53 record — a custom domain over the
   default CloudFront certificate does not work.
+- Scheduled start/stop (EventBridge in the spec for a Lambda that starts/stops EC2): use
+  aws_scheduler_schedule with schedule_expression_timezone = "Asia/Seoul" (plus an IAM role
+  with scheduler.amazonaws.com trust and lambda:InvokeFunction), NOT aws_cloudwatch_event_rule —
+  EventBridge rules evaluate cron in UTC and reviewers flag the time mismatch every time.
 - SNS used for user notification: create aws_sns_topic_subscription (protocol "email",
   endpoint = var.notification_email, variable with description) so the notification path
   exists in infrastructure, not just the topic.
