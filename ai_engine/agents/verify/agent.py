@@ -152,6 +152,12 @@ def _translate_finops_messages(finops_issues: List[dict]) -> None:
         print(f"[검증 에이전트] FinOps 권장사항 번역 실패 → 영어 원문 유지: {e}")
 
 
+def _print_issues(issues: List[dict]) -> None:
+    """이슈 본문을 한 줄씩 로그에 남긴다 (회차별 리포트는 상태에 보존되지 않아 로그가 유일한 기록)."""
+    for i in issues:
+        print(f"  - [{i['severity']}/{i.get('category', '-')}→{i.get('fix_target', '-')}] {i['description']}")
+
+
 def _build_feedback(syntax: dict, llm_issues: List[dict], fix_target: str) -> str:
     """설계/개발 에이전트에게 되돌려 보낼 피드백 텍스트를 만든다."""
     lines: List[str] = []
@@ -214,6 +220,7 @@ def verify_node(state: GraphState) -> dict:
         print(f"[검증 에이전트] LLM 분석 건너뜀: {security['reason']}")
     else:
         print(f"[검증 에이전트] LLM 분석 완료: 이슈 {len(security['issues'])}개 (critical {len(critical_issues)}개)")
+        _print_issues(security["issues"])
 
     # 3. 요구사항 대비 최적화 분석 (오버스펙 / 더 싼 대안)
     print("[검증 에이전트] 요구사항 대비 최적화 분석 중...")
@@ -224,6 +231,7 @@ def verify_node(state: GraphState) -> dict:
     else:
         print(f"[검증 에이전트] 최적화 분석 완료: 이슈 {len(optimization['issues'])}개 "
               f"(critical {len(optimization_criticals)}개)")
+        _print_issues(optimization["issues"])
 
     # 4. Infracost 비용 분석 (통과/실패 판정에는 미반영 — 리포트 용도)
     print("[검증 에이전트] Infracost 비용 분석 중...")
