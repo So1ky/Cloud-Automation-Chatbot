@@ -81,6 +81,19 @@ class ClaudeProviderTests(unittest.TestCase):
             result = chain.invoke("hi")
         self.assertEqual(result.architecture.instance_type, "t3.\nmicro")  # 제어문자 포함도 복원
 
+    def test_structured_output_tolerates_extra_closing_brace(self):
+        """video_opus2에서 실제 발생: 문자열 끝에 닫는 중괄호가 하나 더 붙음."""
+        class Spec(BaseModel):
+            architecture: _Pick
+
+        llm = ClaudeChat(model="claude-opus-5-5", anthropic_api_key="test")
+        chain = llm.with_structured_output(Spec)
+        bound = chain.middle[0]
+        msg = AIMessage(content="", tool_calls=[
+            {"name": "Spec", "args": {"architecture": '{"instance_type": "t3.micro"}}'}, "id": "1"}])
+        with patch.object(type(bound), "invoke", return_value=msg):
+            self.assertEqual(chain.invoke("hi").architecture.instance_type, "t3.micro")
+
     def test_structured_output_raises_without_tool_call(self):
         llm = ClaudeChat(model="claude-opus-5-5", anthropic_api_key="test")
         chain = llm.with_structured_output(_Pick)
