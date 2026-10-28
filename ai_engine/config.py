@@ -55,8 +55,14 @@ def _decode_json_strings(value):
         return [_decode_json_strings(v) for v in value]
     if isinstance(value, str) and value.lstrip()[:1] in ("{", "["):
         try:
-            # strict=False: 문자열 값 안의 줄바꿈 등 제어문자를 허용
-            return _decode_json_strings(json.loads(value, strict=False))
+            # strict=False: 문자열 값 안의 줄바꿈 등 제어문자를 허용.
+            # raw_decode: Claude가 닫는 중괄호를 하나 더 붙이는 경우("...}}" + "}")가 있어
+            # 첫 객체만 읽고 꼬리가 괄호·공백뿐이면 받아들인다.
+            obj, end = json.JSONDecoder(strict=False).raw_decode(value.lstrip())
+            rest = value.lstrip()[end:].strip()
+            if rest and rest.strip("}] ,") != "":
+                raise ValueError(f"Extra data: {rest[:40]!r}")
+            return _decode_json_strings(obj)
         except ValueError as e:
             print(f"[config] 도구 인자 JSON 문자열 복원 실패: {e} / 앞부분: {value[:120]!r}")
             return value
