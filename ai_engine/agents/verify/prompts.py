@@ -88,6 +88,12 @@ for clearly less money:
 Missing requirement (category: "architecture") — the user asked for something
 (traffic scale, latency, availability, budget) that the design under-provisions.
 
+## Out of scope — never report these
+Application-level behavior that Terraform cannot express: per-user notification routing
+beyond an SNS topic + subscription, code that consumes queues, container image contents,
+business logic. Unused-NAT findings are in scope ONLY when nothing in a private subnet
+needs outbound internet (ECS/Fargate image pulls count as needing it).
+
 ## Severity rules — BE CONSERVATIVE
 - "critical": ONLY when the mismatch is blatant — a component or sizing with NO basis in the
   requirements that meaningfully raises cost (roughly 2x+ or an entire unnecessary service),
