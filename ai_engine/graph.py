@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Callable
 
@@ -21,6 +22,8 @@ from ai_engine.agents.design.agent import design_node
 from ai_engine.agents.develop.agent import develop_node
 from ai_engine.agents.verify.agent import verify_node
 from ai_engine.state.graph_state import GraphState
+
+logger = logging.getLogger(__name__)
 
 # Self-Healing 최대 재시도 횟수 (초과 시 마지막 결과와 리포트를 그대로 반환)
 MAX_HEAL_RETRIES = int(os.environ.get("AI_MAX_HEAL_RETRIES", "2"))
@@ -93,13 +96,22 @@ def build_verify_graph():
     return graph.compile()
 
 
+def _emit_progress(emit, stage: str, message: str) -> None:
+    """진행 알림은 부가 기능이므로 콜백 예외가 파이프라인(크리티컬 경로)을 중단시키지 않게 삼킨다."""
+    if not emit:
+        return
+    try:
+        emit(stage, message)
+    except Exception:
+        logger.warning("진행 알림 콜백 실패 (stage=%s) — 파이프라인은 계속 진행", stage, exc_info=True)
+
+
 def _progress_node(node, stage: str, message: str):
     """기존 노드를 실행하기 전에 해당 요청의 진행 단계 알림을 보낸다."""
     def run(state: GraphState, config: RunnableConfig):
         emit = config.get("configurable", {}).get("on_progress")
-        if emit:
-            retry = state.get("retry_count", 0)
-            emit(stage, f"{message} (수정 {retry}회차)" if retry else message)
+        retry = state.get("retry_count", 0)
+        _emit_progress(emit, stage, f"{message} (수정 {retry}회차)" if retry else message)
         return node(state)
     return run
 
@@ -190,8 +202,7 @@ def run_pipeline(
 
     # 검증 결과를 사용자용 설명문으로 변환 (다이어그램·코드와 함께 사용자에게 전달)
     print("[리포트] 사용자용 검증 설명문 생성 중...")
-    if on_progress:
-        on_progress("summary", "검증 설명문 생성 중")
+    _emit_progress(on_progress, "summary", "검증 설명문 생성 중")
     validation_summary = generate_user_summary(
         result["validation_report"],
         result["validation_passed"],
