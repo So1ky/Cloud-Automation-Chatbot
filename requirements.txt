@@ -3,6 +3,7 @@
 
 # LangChain / LangGraph
 langchain==0.3.30
+langchain-anthropic==0.3.22
 langchain-chroma==0.2.6
 langchain-community==0.3.31
 langchain-core==0.3.86
@@ -13,6 +14,7 @@ langsmith==0.7.36
 
 # OpenAI
 openai==2.32.0
+anthropic==0.125.0
 tiktoken==0.12.0
 
 # Vector DB
