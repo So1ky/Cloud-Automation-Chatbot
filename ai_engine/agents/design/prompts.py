@@ -27,8 +27,16 @@ Subnet assignment rules:
 7. compute.subnets for EKS/ECS must contain 2+ PRIVATE subnet names in different AZs for high availability.
    NEVER place ECS/EKS/Fargate in a public subnet. Only ALB and NAT Gateway belong in public subnets.
 8. compute.subnets for EC2/Lambda can be a single subnet.
-9. database.subnets must always list PRIVATE subnet names only.
-10. Always include nat_gateway in networking when private subnets need internet access.
+9. database.subnets must always list PRIVATE subnet names only. RDS/ElastiCache need 2+ subnets
+   (subnet group) even when multi_az is false; OpenSearch with multi_az false must list EXACTLY ONE
+   subnet (a single-AZ domain rejects multiple subnets), 2+ only when multi_az is true.
+10. Include nat_gateway ONLY when something in a private subnet must reach the internet at
+    runtime: ECS/EKS/Fargate pulling container images, or workloads calling external APIs or
+    installing packages. Omit nat_gateway (and internet_gateway when nothing is internet-facing)
+    for internal-only workloads such as an intranet board on a single EC2 reached over
+    VPN/Direct Connect — reviewers reject an unused NAT Gateway as pure cost. A Lambda that only
+    calls AWS APIs (EC2 start/stop, S3, SQS) stays outside the VPC (subnets: null) and never
+    justifies a NAT Gateway.
     nat_gateway MUST be placed in a PUBLIC subnet (e.g. subnet: "PublicSubnet1").
     NEVER place nat_gateway in a private subnet. NAT Gateway needs to reach the Internet Gateway.
 
@@ -87,13 +95,21 @@ Frontend/Static file optimization rules:
 
 
 Async processing rules:
-23. When the user mentions tasks that take a long time (e.g. AI processing, video encoding, batch jobs, background tasks):
-    - ALWAYS use SQS (messaging) as a queue between the web server and the worker.
-    - ALWAYS add a Lambda function (compute, type: Lambda, subnets: null) as the async worker.
-    - NEVER generate SQS without a corresponding Lambda worker.
-    - Flow: ECS (web, private subnet) → SQS → Lambda (no VPC) → storage/database
+23. When the user mentions background/async tasks, ALWAYS use SQS (messaging) as the queue between
+    the web server and a worker, and NEVER generate SQS without a worker. Choose the worker by job size:
+    - Short, light jobs (under a few minutes, small payloads: thumbnails, notifications, small
+      transforms) → ONE Lambda (compute, type: Lambda, subnets: null).
+      Flow: ECS (web, private subnet) → SQS → Lambda (no VPC) → storage/database
+    - Heavy or long jobs (video/audio encoding or transcoding, large file processing, ML
+      training/batch inference, anything that may exceed 15 minutes or needs lots of CPU/disk)
+      → a Fargate worker (compute, type: Fargate, private subnets) consuming SQS, with an
+      auto_scaling entry targeting it (min_capacity 1 unless budget rules say otherwise).
+      NEVER use Lambda for these — Lambda's 15-minute limit and 10 GB /tmp make it unsuitable
+      and reviewers reject it. Flow: ECS (web) → SQS → Fargate worker → storage/database
 24. When the user mentions "notification", "push alert", "알림", or "notify when done":
-    - ALWAYS add SNS (messaging) to send the completion notification.
+    - ALWAYS add SNS (messaging) to send the completion notification, and name the delivery
+      channel in the description (e.g. email subscription). Per-user routing is application
+      logic and is out of scope for the design.
     - Flow: Lambda/Worker → SNS → User
 
 Security and encryption rules:

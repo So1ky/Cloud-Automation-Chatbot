@@ -1,21 +1,36 @@
 """개발 에이전트: 설계 에이전트의 YAML 명세 → Terraform HCL 코드 생성."""
 
-import re
+from typing import List, Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from openai import APIConnectionError, APITimeoutError, RateLimitError
 from pydantic import BaseModel, Field
 
+from ai_engine.agents.develop.hcl_patch import apply_patch
 from ai_engine.agents.develop.prompts import SYSTEM_PROMPT
 from ai_engine.config import get_llm
 from ai_engine.state.graph_state import GraphState
 
-# resource "aws_xxx" "name" 선언 추출 (증분 수정 시 리소스 유실 감지용)
-_RESOURCE_RE = re.compile(r'resource\s+"([\w-]+)"\s+"([\w-]+)"')
+
+class HclEdit(BaseModel):
+    """재시도 시 한 블록 단위의 편집."""
+
+    file: Literal["providers.tf", "variables.tf", "main.tf", "outputs.tf"]
+    action: Literal["replace", "add", "delete"]
+    address: str = Field(description=(
+        "Top-level block address: resource.<type>.<name> (e.g. resource.aws_lb.api), "
+        "data.<type>.<name>, variable.<name>, output.<name>, locals, provider.<name>, terraform"
+    ))
+    hcl: str = Field(default="", description=(
+        "The COMPLETE new text of that single block for replace/add (from the block header to its "
+        "closing brace). Empty for delete."
+    ))
 
 
-def _resource_set(files: dict) -> set:
-    return set(_RESOURCE_RE.findall("\n".join(files.values())))
+class TerraformPatch(BaseModel):
+    """LLM structured output (재시도 모드): 전체 파일 대신 편집 목록."""
+
+    edits: List[HclEdit] = Field(description="Only the blocks that must change to resolve the feedback.")
 
 
 class TerraformFiles(BaseModel):
@@ -25,6 +40,45 @@ class TerraformFiles(BaseModel):
     variables_tf: str = Field(description="Content of variables.tf — all input variable declarations")
     main_tf: str = Field(description="Content of main.tf — all AWS resource definitions")
     outputs_tf: str = Field(description="Content of outputs.tf — all output value declarations")
+
+
+def _patch_previous_files(llm, yaml_output: str, previous_files: dict, feedback: str) -> dict | None:
+    """재시도 모드: 검증 피드백을 편집 목록으로 받아 이전 파일에 기계적으로 적용한다.
+
+    파일 전체를 다시 출력시키면 리소스 누락·이름 변경이 생기므로, 바뀌는 블록만 받고 나머지는
+    바이트 그대로 보존한다. 적용된 편집이 하나도 없으면 None (호출 측이 전체 재생성으로 폴백).
+    """
+    print("[개발 에이전트] 검증 피드백 반영하여 코드 수정 중 (블록 패치 모드)...")
+    previous_code = "\n\n".join(
+        f"### {name}\n```hcl\n{content}\n```" for name, content in previous_files.items()
+    )
+    human_content = (
+        "## 아키텍처 명세 (YAML)\n\n"
+        f"{yaml_output}\n\n---\n\n"
+        f"## 기준 코드 (검증 실패)\n\n{previous_code}\n\n"
+        f"## 검증 에이전트 피드백\n\n{feedback}\n\n"
+        "## 수정 지시 (반드시 준수)\n"
+        "1. 파일 전체를 다시 쓰지 말고, 피드백을 해결하는 데 필요한 블록만 편집 목록(edits)으로 내세요.\n"
+        "2. replace/add의 hcl에는 그 블록 하나의 전문(헤더부터 닫는 중괄호까지)을 넣고, "
+        "address는 hcl의 헤더와 정확히 일치해야 합니다 (예: resource.aws_lb.api).\n"
+        "3. 기존 블록의 이름을 바꾸지 마세요. 꼭 없애야 하면 delete를 쓰세요.\n"
+        "4. 새 리소스가 변수·출력·IAM·보안그룹을 필요로 하면 그 블록들도 add로 함께 내세요.\n"
+        "5. 지적되지 않은 블록은 건드리지 마세요."
+    )
+    messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=human_content)]
+    print(f"[개발 에이전트] 편집 목록 생성 중... ({llm.model_name})")
+    try:
+        patch: TerraformPatch = llm.with_structured_output(TerraformPatch).invoke(messages)
+    except Exception as e:
+        print(f"[개발 에이전트] 편집 목록 생성 실패: {e}")
+        return None
+    files, applied, skipped = apply_patch(previous_files, [e.model_dump() for e in patch.edits])
+    print(f"[개발 에이전트] 편집 {len(patch.edits)}건 중 적용 {len(applied)}건, 건너뜀 {len(skipped)}건")
+    for a in applied:
+        print(f"  + {a}")
+    for r in skipped:
+        print(f"  ! {r}")
+    return files if applied else None
 
 
 def develop_node(state: GraphState) -> dict:
@@ -39,15 +93,20 @@ def develop_node(state: GraphState) -> dict:
     is_retry = bool(feedback) and state.get("fix_target") == "develop"
 
     llm = get_llm("develop")
-    structured_llm = llm.with_structured_output(TerraformFiles)
 
+    if is_retry and previous_files:
+        patched = _patch_previous_files(llm, yaml_output, previous_files, feedback)
+        if patched is not None:
+            return _finish(patched)
+        print("[개발 에이전트] 패치가 하나도 적용되지 않아 전체 재생성으로 폴백합니다")
+
+    structured_llm = llm.with_structured_output(TerraformFiles)
     human_content = (
         "## 아키텍처 명세 (YAML)\n\n"
         f"{yaml_output}\n\n"
         "위 명세를 기반으로 providers.tf, variables.tf, main.tf, outputs.tf 를 생성하세요."
     )
     if is_retry and previous_files:
-        print("[개발 에이전트] 검증 피드백 반영하여 코드 수정 중 (증분 수정 모드)...")
         previous_code = "\n\n".join(
             f"### {name}\n```hcl\n{content}\n```" for name, content in previous_files.items()
         )
@@ -55,11 +114,10 @@ def develop_node(state: GraphState) -> dict:
             f"\n\n---\n\n"
             f"## 기준 코드 (이전 생성본 — 검증 실패)\n\n{previous_code}\n\n"
             f"## 검증 에이전트 피드백\n\n{feedback}\n\n"
-            f"## 증분 수정 지시 (반드시 준수)\n"
+            f"## 수정 지시 (반드시 준수)\n"
             f"1. 위 기준 코드를 시작점으로 삼아, 피드백에서 지적된 부분만 수정/추가하세요.\n"
             f"2. 지적되지 않은 기존 리소스는 단 하나도 삭제하거나 이름을 바꾸지 마세요.\n"
-            f"3. 누락 컴포넌트 추가 시 필요한 IAM 역할/보안그룹/변수도 함께 추가하세요.\n"
-            f"4. 수정 결과로 4개 파일의 전체 내용을 출력하세요 (기준 코드 + 수정사항)."
+            f"3. 수정 결과로 4개 파일의 전체 내용을 출력하세요 (기준 코드 + 수정사항)."
         )
 
     messages = [
@@ -79,48 +137,15 @@ def develop_node(state: GraphState) -> dict:
     except Exception as e:
         raise RuntimeError(f"LLM 호출 중 오류 발생: {e}") from e
 
-    terraform_files = {
+    return _finish({
         "providers.tf": tf.providers_tf,
         "variables.tf": tf.variables_tf,
         "main.tf":      tf.main_tf,
         "outputs.tf":   tf.outputs_tf,
-    }
+    })
 
-    # 증분 수정 모드 보호장치: 재생성 중 기존 리소스가 유실되면 1회 복구 시도.
-    # (피드백이 명시적으로 삭제를 요구한 경우는 드물고, 그 경우 다음 검증에서 다시 걸러진다)
-    if is_retry and previous_files:
-        dropped = _resource_set(previous_files) - _resource_set(terraform_files)
-        if dropped:
-            dropped_list = ", ".join(f"{t}.{n}" for t, n in sorted(dropped))
-            print(f"[개발 에이전트] 유실 리소스 {len(dropped)}개 감지 → 복구 재생성: {dropped_list}")
-            generated_code = "\n\n".join(
-                f"### {name}\n{content}" for name, content in terraform_files.items()
-            )
-            recovery_messages = messages + [
-                AIMessage(content=generated_code),
-                HumanMessage(content=(
-                    f"방금 출력에서 기준 코드에 있던 다음 리소스가 유실되었습니다: {dropped_list}\n"
-                    f"이 리소스들을 기준 코드에서 그대로 되살리고, 방금 수정한 내용도 유지한 채 "
-                    f"4개 파일 전체를 다시 출력하세요."
-                )),
-            ]
-            try:
-                recovered: TerraformFiles = structured_llm.invoke(recovery_messages)
-                candidate = {
-                    "providers.tf": recovered.providers_tf,
-                    "variables.tf": recovered.variables_tf,
-                    "main.tf":      recovered.main_tf,
-                    "outputs.tf":   recovered.outputs_tf,
-                }
-                still_dropped = _resource_set(previous_files) - _resource_set(candidate)
-                if len(still_dropped) < len(dropped):
-                    terraform_files = candidate
-                    dropped = still_dropped
-            except Exception as e:
-                print(f"[개발 에이전트] 복구 재생성 실패 (원본 결과 유지): {e}")
-            if dropped:
-                print(f"[개발 에이전트] 복구 후에도 유실 {len(dropped)}개 — 검증 단계에서 재확인됩니다")
 
+def _finish(terraform_files: dict) -> dict:
     print("[개발 에이전트] Terraform 파일 4개 생성 완료")
     for filename, content in terraform_files.items():
         print(f"  - {filename}: {len(content.splitlines())}줄")

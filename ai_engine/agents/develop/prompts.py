@@ -209,6 +209,23 @@ Generate exactly 4 Terraform files:
   1. aws_lb — the load balancer
   2. aws_lb_target_group — target group (target_type = "ip" for FARGATE)
   3. aws_lb_listener — listener forwarding to the target group
+- Listener ports and the ALB security group MUST match — never open 443 in the SG without
+  a 443 listener:
+  - the spec's dns record TARGETS THIS ALB → aws_acm_certificate in the ALB's own region
+    (default provider, DNS validation) + aws_route53_record for validation +
+    aws_acm_certificate_validation, an HTTPS :443 listener (certificate_arn =
+    aws_acm_certificate_validation.<name>.certificate_arn, ssl_policy =
+    "ELBSecurityPolicy-TLS13-1-2-2021-06") and an :80 listener that only redirects to
+    HTTPS; SG ingress 80 and 443
+  - the ALB is a CloudFront origin (dns targets CloudFront) → HTTP :80 listener, and the
+    ALB SG ingress :80 ONLY from the CloudFront origin-facing managed prefix list, never
+    0.0.0.0/0: data "aws_ec2_managed_prefix_list" "cloudfront" { name =
+    "com.amazonaws.global.cloudfront.origin-facing" } and prefix_list_ids =
+    [data.aws_ec2_managed_prefix_list.cloudfront.id] on the rule. NEVER reuse a us-east-1
+    CloudFront certificate on an ALB — ALB certificates must be in the ALB's region.
+  - no domain anywhere in the spec → no ACM certificate can be validated, so a single
+    HTTP :80 listener and SG ingress ONLY on 80; add a comment on the listener that TLS
+    requires a domain and should be enabled before production.
 - outputs.tf must reference aws_lb.<name>.dns_name, NOT aws_alb.<name>.dns_name
 - Respect the spec's internal flag:
   - internal: true  → aws_lb with internal = true, subnets = PRIVATE subnets
@@ -218,13 +235,14 @@ Generate exactly 4 Terraform files:
 ## OpenSearch (VPC) Rule
 - aws_opensearch_domain with vpc_options MUST include an access_policies block —
   without it, IAM-signed requests are rejected at runtime even though apply succeeds.
-  Network access is already restricted by the security group, so use the standard
-  in-VPC policy:
+  Grant ONLY the IAM roles of the components that query the domain (ECS task role,
+  Lambda role, EC2 instance role) — NEVER Principal = { AWS = "*" }, reviewers flag that
+  as an over-broad resource policy even inside a VPC:
   access_policies = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { AWS = "*" }
+      Principal = { AWS = [aws_iam_role.<app_role>.arn] }
       Action    = "es:ESHttp*"
       Resource  = "arn:aws:es:${var.aws_region}:${data.aws_caller_identity.current.account_id}:domain/<domain-name>/*"
     }]
@@ -339,6 +357,47 @@ Generate exactly 4 Terraform files:
 - ALWAYS also include the account-root statement so the key stays manageable:
   data "aws_caller_identity" "current" {}
   principal AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root", actions ["kms:*"]
+
+## Recurring-Defect Checklist (reviewers reject these every time — verify before output)
+- Security group sources: tier-to-tier rules use source_security_group_id, never the VPC
+  CIDR. App/EC2/ECS tier ← ALB security group only (the exact container/instance port);
+  DB/cache/OpenSearch tier ← app security group only (the DB port). Use a CIDR source only
+  when there is no upstream security group (e.g. VPN users reaching an internal EC2 with
+  no ALB) — then use variable "allowed_cidr" (description: corporate/VPN CIDR), not the
+  whole VPC CIDR and never 0.0.0.0/0 except :80/:443 on an internet-facing ALB that is
+  itself the public entry point (not a CloudFront origin — see ALB Rule).
+- IAM policies: Resource must be the specific ARNs (aws_s3_bucket.x.arn and "${...arn}/*",
+  aws_sqs_queue.x.arn, aws_dynamodb_table.x.arn, aws_sns_topic.x.arn, the EC2 instance ARN
+  for ec2:StartInstances/StopInstances). Resource = "*" ONLY for actions that have no
+  resource-level permissions (ec2:Describe*, logs:CreateLogGroup, xray). ECS: a separate
+  execution role with AmazonECSTaskExecutionRolePolicy attached, plus a task role scoped to
+  the services the container uses.
+- CloudFront with an S3 origin: aws_cloudfront_origin_access_control (signing_behavior
+  "always", signing_protocol "sigv4"), origin_access_control_id on the origin, AND an
+  aws_s3_bucket_policy allowing Principal cloudfront.amazonaws.com s3:GetObject on
+  "${bucket.arn}/*" with Condition StringEquals "AWS:SourceArn" = distribution arn.
+  If the bucket uses a customer-managed KMS key, also apply the KMS Key Policy Rule.
+- Route53 record targeting CloudFront: the distribution needs aliases = [var.domain_name]
+  and viewer_certificate { acm_certificate_arn, ssl_support_method = "sni-only" } with a
+  certificate created in us-east-1 (provider "aws" { alias = "us_east_1", region =
+  "us-east-1" }, aws_acm_certificate with provider = aws.us_east_1 + DNS validation).
+  Without a certificate, do NOT create the Route53 record — a custom domain over the
+  default CloudFront certificate does not work.
+- SNS used for user notification: create aws_sns_topic_subscription (protocol "email",
+  endpoint = var.notification_email, variable with description) so the notification path
+  exists in infrastructure, not just the topic.
+- SQS consumed by Lambda: queue visibility_timeout_seconds >= 6 × the Lambda timeout, a
+  dead-letter queue (second aws_sqs_queue + redrive_policy maxReceiveCount = 3), and the
+  Lambda role gets sqs:ReceiveMessage/DeleteMessage/GetQueueAttributes on the queue ARN.
+- EC2 AMI: NEVER a hardcoded or placeholder AMI ID (reviewers reject "ami-xxxx" and fixed
+  IDs go stale). Resolve it from the public SSM parameter:
+  data "aws_ssm_parameter" "al2023" {
+    name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+  }
+  and use ami = data.aws_ssm_parameter.al2023.value in aws_instance / aws_launch_template.
+- aws_db_instance: storage_encrypted = true, publicly_accessible = false,
+  skip_final_snapshot = false WITH final_snapshot_identifier = "${var.project_name}-final"
+  (or skip_final_snapshot = true for dev/test when the spec says non-production).
 
 ## HCL Formatting Rule
 - NEVER write nested blocks on a single line — HCL forbids it and terraform init fails:
