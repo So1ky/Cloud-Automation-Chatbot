@@ -26,6 +26,7 @@ interface Message {
 interface ChatAreaProps {
   messages: Message[];
   isLoading: boolean;
+  progressMessage: string;
   isHistoryLoading: boolean;
   healthStatus: "ok" | "error" | "loading";
   inputValue: string;
@@ -308,6 +309,7 @@ function CostCard({ cost }: { cost: CostEstimate }) {
 export default function ChatArea({
   messages,
   isLoading,
+  progressMessage,
   isHistoryLoading,
   healthStatus,
   inputValue,
@@ -498,7 +500,7 @@ export default function ChatArea({
               <div className="rounded-2xl rounded-tl-none border border-slate-200 bg-white px-5 py-4 shadow-sm">
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-slate-400 font-semibold animate-pulse">
-                    아키텍처 설계 및 Terraform 코드 생성 중...
+                    {progressMessage || "요청 준비 중"}
                   </span>
                   <div className="flex gap-1">
                     <div className="h-2 w-2 animate-bounce rounded-full bg-blue-600"></div>
