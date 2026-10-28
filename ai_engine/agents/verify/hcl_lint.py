@@ -10,6 +10,7 @@ code_lint가 "명세 컴포넌트가 코드에 있는가"를 보는 데 비해, 
     R3 CloudFront가 읽는 S3가 KMS 암호화인데 키 정책에 cloudfront.amazonaws.com 없음
     R4 SQS → Lambda event source mapping에서 큐 visibility_timeout < Lambda timeout
     R5 보안그룹 ingress 0.0.0.0/0 이 80/443 외 포트에 개방
+    R6 RDS engine_version이 Extended Support 대상(MySQL 5.7/8.0, PostgreSQL ≤13) → vCPU당 추가 요금
 """
 
 from __future__ import annotations
@@ -61,6 +62,37 @@ def _rds(blocks) -> List[dict]:
             issues.append(_issue(
                 f"{addr}가 publicly_accessible = true 로 인터넷에 노출됩니다.",
                 f"{addr} 블록에서 publicly_accessible = false 로 바꾸세요."))
+    return issues
+
+
+# RDS Extended Support 대상 메이저 버전 (커뮤니티 지원 종료 → vCPU-시간당 추가 요금, Infracost "Extended support")
+_EXTENDED_SUPPORT = {
+    "mysql": ("5.7", "8.0"),
+    "postgres": ("11", "12", "13"),
+}
+
+
+def _rds_engine_version(blocks) -> List[dict]:
+    issues = []
+    for addr, text in blocks:
+        if not addr.startswith("resource.aws_db_instance."):
+            continue
+        engine = re.search(r'\bengine\s*=\s*"(\w+)"', text)
+        version = re.search(r'\bengine_version\s*=\s*"([\d.]+)"', text)
+        if not (engine and version):
+            continue
+        majors = _EXTENDED_SUPPORT.get(engine.group(1).lower())
+        if not majors:
+            continue
+        v = version.group(1)
+        if any(v == m or v.startswith(m + ".") for m in majors):
+            issues.append(_issue(
+                f"{addr}의 engine_version \"{v}\"({engine.group(1)})은 RDS Extended Support 대상이라 "
+                f"vCPU-시간당 추가 요금이 붙습니다 (db.t3.micro 기준 월 약 146 USD, 인스턴스 요금의 7배).",
+                f"{addr}의 engine_version을 "
+                + ('"8.4"' if engine.group(1).lower() == "mysql" else '"16" 또는 "17"')
+                + " 로 바꾸세요 (또는 engine_version을 생략해 현재 기본 버전 사용).",
+                category="cost"))
     return issues
 
 
@@ -182,4 +214,5 @@ def lint_hcl(terraform_files: Dict[str, str]) -> List[dict]:
     if not terraform_files:
         return []
     blocks = _blocks(terraform_files)
-    return _rds(blocks) + _cloudfront(blocks) + _sqs_lambda(blocks) + _security_groups(blocks)
+    return (_rds(blocks) + _rds_engine_version(blocks) + _cloudfront(blocks)
+            + _sqs_lambda(blocks) + _security_groups(blocks))

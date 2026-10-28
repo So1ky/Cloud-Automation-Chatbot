@@ -189,8 +189,10 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
             subnet_children[subnets[0]].append(rid)
         else:
             cloud_db.append(rid)
-        # Multi-AZ: 두 번째 서브넷에 DB Standby 복제
-        if len(subnets) >= 2 and subnets[1] in subnet_children:
+        # Multi-AZ일 때만 두 번째 서브넷에 DB Standby 복제.
+        # (RDS 서브넷 그룹은 single-AZ여도 서브넷 2개가 필요하므로 서브넷 수로 판단하면
+        #  DB가 두 개인 것처럼 그려진다)
+        if item.get("multi_az") and len(subnets) >= 2 and subnets[1] in subnet_children:
             replica_rid = f"{rid}Standby"
             resources[replica_rid] = resources[rid].copy()
             subnet_children[subnets[1]].append(replica_rid)

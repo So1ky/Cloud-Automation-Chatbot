@@ -19,6 +19,24 @@ class RdsTests(unittest.TestCase):
         self.assertEqual(_run('resource "aws_db_instance" "db" {\n  storage_encrypted = true\n  publicly_accessible = false\n}\n'), [])
 
 
+class RdsEngineVersionTests(unittest.TestCase):
+    def test_mysql_80_flagged_as_extended_support(self):
+        issues = _run('resource "aws_db_instance" "db" {\n  engine = "mysql"\n  engine_version = "8.0"\n  storage_encrypted = true\n}\n')
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]["category"], "cost")
+        self.assertIn("Extended Support", issues[0]["description"])
+        self.assertIn('"8.4"', issues[0]["suggestion"])
+
+    def test_postgres_13_flagged_and_16_ok(self):
+        bad = _run('resource "aws_db_instance" "db" {\n  engine = "postgres"\n  engine_version = "13.12"\n  storage_encrypted = true\n}\n')
+        ok = _run('resource "aws_db_instance" "db" {\n  engine = "postgres"\n  engine_version = "16"\n  storage_encrypted = true\n}\n')
+        self.assertEqual(len(bad), 1); self.assertEqual(ok, [])
+
+    def test_mysql_84_and_no_version_ok(self):
+        self.assertEqual(_run('resource "aws_db_instance" "db" {\n  engine = "mysql"\n  engine_version = "8.4"\n  storage_encrypted = true\n}\n'), [])
+        self.assertEqual(_run('resource "aws_db_instance" "db" {\n  engine = "mysql"\n  storage_encrypted = true\n}\n'), [])
+
+
 CF = '''
 resource "aws_s3_bucket" "videos" {
   bucket = "v"
