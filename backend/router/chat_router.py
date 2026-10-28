@@ -137,8 +137,6 @@ async def stream_chat(
     def work():
         try:
             result = design(req, previous_yaml=previous_yaml, on_progress=stream.progress)
-            if stream.closed.is_set():
-                return
             stream.progress("diagram", "다이어그램 생성 중")
             image = None
             warning = None
@@ -147,8 +145,6 @@ async def stream_chat(
             except Exception:
                 logger.exception("Diagram generation failed")
                 warning = "다이어그램 생성에 실패했습니다. AI 결과는 저장되었습니다."
-            if stream.closed.is_set():
-                return
             stream.progress("save", "결과 저장 중")
             with SessionLocal() as session:
                 chat = ChatHistory(
@@ -171,12 +167,16 @@ async def stream_chat(
                            "cost_estimate": result.cost_estimate}
                 session.commit()
             stream.emit("done", payload)
+        except HTTPException as e:
+            # design()이 변환한 400/502/504는 상태 코드와 한국어 detail을 그대로 전달한다
+            # (프론트 toUserMessage()의 상태 코드 계약 유지)
+            stream.emit("error", {"status": e.status_code, "message": e.detail})
         except Exception:
             logger.exception("Streaming chat failed")
-            stream.emit("error", {"message": "요청 처리에 실패했습니다. 대화 내역을 확인한 뒤 다시 시도해 주세요."})
+            stream.emit("error", {"status": 500, "message": "요청 처리에 실패했습니다. 잠시 후 다시 시도해 주세요."})
 
-    # 기존 동기 파이프라인은 강제로 취소할 수 없다. 연결이 끊기면 현재 호출이 끝난 후
-    # 종료 여부를 확인하여 다이어그램 생성과 저장을 건너뛴다.
+    # 기존 동기 파이프라인은 강제로 취소할 수 없다. 연결이 끊겨도 이미 과금된 결과는
+    # 끝까지 저장하고, 닫힌 스트림으로의 전송만 ChatStream이 무시한다.
     threading.Thread(target=work, daemon=True).start()
     return StreamingResponse(stream.events(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache, no-transform",

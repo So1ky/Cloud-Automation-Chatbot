@@ -40,8 +40,10 @@ class ChatStreamTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.engine.dispose()
 
-    async def request(self, fail_image=False, fail_save=False):
+    async def request(self, fail_image=False, fail_save=False, fail_design=None):
         def design(req, previous_yaml=None, on_progress=None):
+            if fail_design:
+                raise fail_design
             on_progress("design", "설계 중")
             on_progress("verify", "검증 중")
             return SimpleNamespace(terraform_files={"main.tf": "resource {}"}, validation_summary="검증 완료",
@@ -90,6 +92,14 @@ class ChatStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("terraform_code", response.text)
         self.assertIn("event: error", response.text)
         self.assertNotIn("event: done", response.text)
+
+    async def test_http_exception_keeps_status_and_detail(self):
+        from fastapi import HTTPException
+        response = await self.request(fail_design=HTTPException(status_code=502, detail="OpenAI API 연결 실패"))
+        self.assertIn("event: error", response.text)
+        payload = json.loads(response.text.split("event: error\ndata: ", 1)[1].strip())
+        self.assertEqual(payload["status"], 502)
+        self.assertEqual(payload["message"], "OpenAI API 연결 실패")
 
     async def test_validation_before_sse(self):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://test") as client:
