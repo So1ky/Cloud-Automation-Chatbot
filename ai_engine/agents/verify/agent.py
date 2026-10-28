@@ -25,6 +25,7 @@ from openai import APIConnectionError, APITimeoutError, RateLimitError
 from pydantic import BaseModel, Field
 
 from ai_engine.agents.verify.code_lint import lint_code
+from ai_engine.agents.verify.hcl_lint import lint_hcl
 from ai_engine.agents.verify.prompts import (
     FINOPS_TRANSLATE_PROMPT,
     OPTIMIZATION_PROMPT,
@@ -201,6 +202,13 @@ def verify_node(state: GraphState) -> dict:
     code_issues = lint_code(yaml_output, terraform_files)
     if code_issues:
         print(f"[검증 에이전트] 코드 누락 컴포넌트 {len(code_issues)}건 발견")
+
+    # 0.6. 리소스 내부 설정 결함 (규칙 기반, 결정적 — LLM 편차 없이 매번 같은 판정)
+    hcl_issues = lint_hcl(terraform_files)
+    if hcl_issues:
+        print(f"[검증 에이전트] 코드 설정 결함 {len(hcl_issues)}건 발견")
+        _print_issues(hcl_issues)
+        code_issues = code_issues + hcl_issues
 
     # 1. terraform validate (문법 검증)
     print("[검증 에이전트] terraform validate 실행 중...")
