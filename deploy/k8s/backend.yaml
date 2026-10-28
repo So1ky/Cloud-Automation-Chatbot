@@ -18,6 +18,11 @@ metadata:
 spec:
   # 주의: 스케일아웃 전에 alembic 자동 마이그레이션 Job 분리 + chroma 동시 접근 문제 선결 필요
   replicas: 1
+  # 워커(4GB)에 2Gi 파드 두 개를 동시에 둘 자리가 없어 RollingUpdate는 새 파드가 영원히 Pending
+  # (2026-10-28 실측: 모니터링 스택이 worker-2로 간 뒤 여유 메모리 1.4Gi).
+  # 구 파드를 먼저 내리고 올린다 — 배포당 ~2분 다운타임, replicas=1 전제.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: backend
