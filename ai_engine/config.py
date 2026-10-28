@@ -7,6 +7,7 @@
     AI_MODEL_VERIFY=gpt-5.6-luna      # 검증 에이전트 (보안/최적화 LLM 분석)
     AI_MODEL_RAG=gpt-4o-mini          # RAG 쿼리 확장 (번역 + multi-query)
     AI_REASONING_EFFORT=low           # reasoning 모델(gpt-5*/o*)에만 적용
+    AI_REASONING_EFFORT_DESIGN=high   # 에이전트별 재정의 (미설정 시 AI_REASONING_EFFORT)
 
 미설정 시 기본값은 gpt-4o-mini.
 """
@@ -27,12 +28,21 @@ def _is_reasoning_model(model: str) -> bool:
     return model.startswith(_REASONING_PREFIXES)
 
 
+def get_reasoning_effort(agent: str) -> str:
+    """에이전트별 추론 강도. 에이전트 전용 변수 → 공통 변수 → 기본 low 순으로 결정한다."""
+    return os.environ.get(
+        f"AI_REASONING_EFFORT_{agent.upper()}",
+        os.environ.get("AI_REASONING_EFFORT", "low"),
+    )
+
+
 def get_llm(agent: str, temperature: float = 0.0) -> ChatOpenAI:
     """에이전트 이름(design/develop/verify/rag)에 해당하는 LLM 인스턴스를 만든다.
 
     - 일반 모델(gpt-4o 계열): temperature 적용 (기본 0 — 결정적 출력)
     - reasoning 모델(gpt-5/o 계열): temperature 미지원이므로 생략하고
-      AI_REASONING_EFFORT(기본 low)를 적용 — 추론 토큰 과금/지연 통제
+      추론 강도를 적용 — 추론 토큰 과금/지연 통제.
+      AI_REASONING_EFFORT_<AGENT>가 있으면 그 값, 없으면 AI_REASONING_EFFORT(기본 low)
     """
     model = os.environ.get(f"AI_MODEL_{agent.upper()}", DEFAULT_MODEL)
 
@@ -40,7 +50,6 @@ def get_llm(agent: str, temperature: float = 0.0) -> ChatOpenAI:
     common = {"timeout": 120, "max_retries": 2}
 
     if _is_reasoning_model(model):
-        effort = os.environ.get("AI_REASONING_EFFORT", "low")
-        return ChatOpenAI(model=model, reasoning_effort=effort, **common)
+        return ChatOpenAI(model=model, reasoning_effort=get_reasoning_effort(agent), **common)
 
     return ChatOpenAI(model=model, temperature=temperature, **common)
