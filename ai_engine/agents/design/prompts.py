@@ -27,7 +27,9 @@ Subnet assignment rules:
 7. compute.subnets for EKS/ECS must contain 2+ PRIVATE subnet names in different AZs for high availability.
    NEVER place ECS/EKS/Fargate in a public subnet. Only ALB and NAT Gateway belong in public subnets.
 8. compute.subnets for EC2/Lambda can be a single subnet.
-9. database.subnets must always list PRIVATE subnet names only.
+9. database.subnets must always list PRIVATE subnet names only. RDS/ElastiCache need 2+ subnets
+   (subnet group) even when multi_az is false; OpenSearch with multi_az false must list EXACTLY ONE
+   subnet (a single-AZ domain rejects multiple subnets), 2+ only when multi_az is true.
 10. Include nat_gateway ONLY when something in a private subnet must reach the internet at
     runtime: ECS/EKS/Fargate pulling container images, or workloads calling external APIs or
     installing packages. Omit nat_gateway (and internet_gateway when nothing is internet-facing)
