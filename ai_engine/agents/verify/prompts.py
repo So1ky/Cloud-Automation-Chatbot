@@ -45,6 +45,10 @@ Cost (category: "cost"):
   business logic. Terraform cannot express these — do not block on them.
 - "warning": works but violates best practices or wastes cost.
 - "info": stylistic or informational.
+- Generator conventions that are INTENTIONAL placeholders — never report them at all:
+  Lambda filename = "lambda_function.zip" without a package/source_code_hash, container
+  image variables defaulting to "REPLACE_ME:tag", db_password passed as a sensitive
+  variable, and the account-root "kms:*" administration statement in a KMS key policy.
 
 ## fix_target rules
 - "design": the problem originates in the ARCHITECTURE SPEC itself — wrong service choice,
