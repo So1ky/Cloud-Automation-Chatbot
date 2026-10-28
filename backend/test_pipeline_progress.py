@@ -52,6 +52,15 @@ class PipelineProgressTests(unittest.TestCase):
         with patch.dict(sys.modules, self.modules):
             self.assertTrue(self.graph.run_pipeline("legacy")["validation_passed"])
 
+    def test_callback_exception_does_not_break_pipeline(self):
+        def broken(stage, message):
+            raise RuntimeError("callback failure")
+        with patch.dict(sys.modules, self.modules), self.assertLogs(self.graph.logger, level="WARNING") as logs:
+            result = self.graph.run_pipeline("request", on_progress=broken)
+        self.assertEqual(result["terraform_files"], {"main.tf": "request"})
+        self.assertTrue(result["validation_passed"])
+        self.assertEqual(len(logs.records), 6)  # design, develop, verify, develop, verify, summary
+
     def test_concurrent_requests_keep_callbacks_separate(self):
         def run(name):
             events = []
