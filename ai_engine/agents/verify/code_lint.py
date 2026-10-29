@@ -130,6 +130,8 @@ def lint_code(yaml_output: str, terraform_files: dict) -> List[dict]:
         (bool((arch.get("security") or {}).get("guard_duty")), ("aws_guardduty_detector",), "security.guard_duty", "GuardDuty"),
         (bool((arch.get("security") or {}).get("kms")), ("aws_kms_key",), "security.kms", "KMS"),
         (bool((arch.get("security") or {}).get("cloudtrail")), ("aws_cloudtrail",), "security.cloudtrail", "CloudTrail"),
+        (any(isinstance(m, dict) and m.get("alarms") for m in (arch.get("monitoring") or [])),
+         ("aws_cloudwatch_metric_alarm", "aws_cloudwatch_composite_alarm"), "monitoring.alarms", "CloudWatch 알람"),
     ]
     for present, required, label, human in singles:
         if present and _count(required, found) == 0:

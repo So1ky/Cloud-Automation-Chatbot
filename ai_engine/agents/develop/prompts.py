@@ -228,7 +228,7 @@ Generate exactly 4 Terraform files:
 
 ## ALB Rule
 - When the spec includes a load_balancer, ALWAYS generate all 3 resources:
-  1. aws_lb — the load balancer
+  1. aws_lb — the load balancer (its name must NOT begin with "internal-"; the provider rejects it)
   2. aws_lb_target_group — target group (target_type = "ip" for FARGATE)
   3. aws_lb_listener — listener forwarding to the target group
 - Listener ports and the ALB security group MUST match — never open 443 in the SG without
@@ -395,6 +395,15 @@ Generate exactly 4 Terraform files:
   - CloudFront reading SSE-KMS encrypted S3 objects → principal cloudfront.amazonaws.com: kms:Decrypt
     (with aws:SourceArn condition on the distribution when possible)
   - CloudWatch Logs encryption → principal logs.<region>.amazonaws.com: kms:Encrypt*, kms:Decrypt*, kms:GenerateDataKey*
+  - SNS topic encrypted with this key that CloudWatch alarms publish to → principal
+    cloudwatch.amazonaws.com: kms:Decrypt, kms:GenerateDataKey*, with Condition StringEquals
+    aws:SourceAccount = account id and ArnLike aws:SourceArn =
+    "arn:aws:cloudwatch:${region}:${account_id}:alarm:*" (never use alias/aws/sns for an
+    alarm topic — CloudWatch cannot use the AWS-managed key and notifications are silently dropped)
+- Never reference an SNS topic / SQS queue / bucket ARN inside aws_kms_key.policy when that
+  resource is itself encrypted with the key — it creates a dependency cycle (key → topic → key).
+  Scope service principals with conditions built from strings (account id, region, ARN patterns),
+  never a resource reference — or move the policy to aws_kms_key_policy.
 - ALWAYS also include the account-root statement so the key stays manageable:
   data "aws_caller_identity" "current" {}
   principal AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root", actions ["kms:*"]
@@ -434,7 +443,7 @@ Generate exactly 4 Terraform files:
   without PassRole every scheduled run fails.
 - aws_cloudtrail: the destination bucket needs an aws_s3_bucket_policy with TWO statements for
   Principal cloudtrail.amazonaws.com — s3:GetBucketAcl on the bucket ARN and s3:PutObject on
-  "${bucket.arn}/AWSLogs/${account_id}/*" (prefix it with s3_key_prefix if you set one) with
+  "${bucket.arn}/AWSLogs/${account_id}/*" (do not set s3_key_prefix; if you must, the path becomes "${bucket.arn}/<prefix>/AWSLogs/...") with
   Condition s3:x-amz-acl = bucket-owner-full-control — and depends_on that policy. When
   cloud_watch_logs_group_arn is set, also set cloud_watch_logs_role_arn to a role trusted by
   cloudtrail.amazonaws.com with logs:CreateLogStream and logs:PutLogEvents on
