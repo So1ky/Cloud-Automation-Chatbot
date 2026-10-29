@@ -178,7 +178,7 @@ Generate exactly 4 Terraform files:
     (cloudtrail.amazonaws.com: s3:GetBucketAcl + s3:PutObject)
   - aws_cloudtrail with is_multi_region_trail = true, enable_log_file_validation = true,
     include_global_service_events = true, depends_on = [the bucket policy], and kms_key_id
-    when security.kms = true (apply the KMS Key Policy Rule for cloudtrail.amazonaws.com)
+    when security.kms = true (add the cloudtrail.amazonaws.com statement per the KMS Key Policy Rule)
   - an event_selector recording S3 object-level access ("누가 언제 데이터에 접근") for the
     spec's storage buckets (not the audit bucket itself):
     event_selector {
@@ -388,6 +388,10 @@ Generate exactly 4 Terraform files:
   (aws_cloudwatch_log_group) referenced by ECS/Lambda logging configuration.
 
 ## KMS Key Policy Rule
+- When security.kms = true, the key policy ALWAYS contains, decided from the YAML alone:
+  root (below); logs.<region> if any log group is encrypted; cloudwatch.amazonaws.com if the
+  YAML's monitoring lists any alarms (the alarm SNS topic is encrypted); cloudtrail.amazonaws.com
+  if security.cloudtrail = true. Write these statements first, then add the rest below.
 - A customer-managed aws_kms_key used by AWS services MUST include a key policy granting
   those service principals access — without it, terraform apply succeeds but the service
   gets AccessDenied at runtime:
@@ -400,15 +404,26 @@ Generate exactly 4 Terraform files:
     aws:SourceAccount = account id and ArnLike aws:SourceArn =
     "arn:aws:cloudwatch:${region}:${account_id}:alarm:*" (never use alias/aws/sns for an
     alarm topic — CloudWatch cannot use the AWS-managed key and notifications are silently dropped)
+  - SQS queue / SNS topic encrypted with this key that an EventBridge rule targets → principal
+    events.amazonaws.com: kms:Decrypt, kms:GenerateDataKey, Resource "*", with NO condition block
+    (EventBridge does not populate aws:SourceAccount/aws:SourceArn on KMS calls — adding them
+    silently drops every message). An execution role's sqs:SendMessage alone is not enough.
 - Never reference an SNS topic / SQS queue / bucket ARN inside aws_kms_key.policy when that
   resource is itself encrypted with the key — it creates a dependency cycle (key → topic → key).
   Scope service principals with conditions built from strings (account id, region, ARN patterns),
-  never a resource reference — or move the policy to aws_kms_key_policy.
+  never a resource reference — or move the policy to aws_kms_key_policy. Exception: the
+  EventBridge statement above takes no condition.
 - ALWAYS also include the account-root statement so the key stays manageable:
   data "aws_caller_identity" "current" {}
   principal AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root", actions ["kms:*"]
 
 ## Recurring-Defect Checklist (reviewers reject these every time — verify before output)
+- KMS key policy coverage: for each aws_kms_key, list every resource that uses it and add the
+  matching KMS Key Policy Rule statement for each — e.g. an encrypted SNS topic referenced by
+  any aws_cloudwatch_metric_alarm alarm_actions/ok_actions → cloudwatch.amazonaws.com; an
+  encrypted SQS/SNS that is an aws_cloudwatch_event_target arn → events.amazonaws.com; an
+  encrypted log group → logs.<region>.amazonaws.com; aws_cloudtrail kms_key_id →
+  cloudtrail.amazonaws.com. A key policy with only root + cloudtrail is almost always incomplete.
 - Security group sources: tier-to-tier rules use source_security_group_id, never the VPC
   CIDR. App/EC2/ECS tier ← ALB security group only (the exact container/instance port);
   DB/cache/OpenSearch tier ← app security group only (the DB port). Use a CIDR source only
