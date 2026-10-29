@@ -11,6 +11,8 @@ code_lint가 "명세 컴포넌트가 코드에 있는가"를 보는 데 비해, 
     R4 SQS → Lambda event source mapping에서 큐 visibility_timeout < Lambda timeout
     R5 보안그룹 ingress 0.0.0.0/0 이 80/443 외 포트에 개방
     R6 RDS engine_version이 Extended Support 대상(MySQL 5.7/8.0, PostgreSQL ≤13) → vCPU당 추가 요금
+    R7 NAT/IGW 경로 없는 서브넷의 ECS 서비스(assign_public_ip=false) / VPC Lambda에 VPC 엔드포인트 없음
+       → ECR 이미지 풀·AWS API 호출 불가로 태스크가 기동조차 못 함
 """
 
 from __future__ import annotations
@@ -209,10 +211,73 @@ def _security_groups(blocks) -> List[dict]:
     return issues
 
 
+def _subnet_refs(text: str) -> set:
+    return set(re.findall(r"aws_subnet\.(\w+)", text))
+
+
+def _isolated_subnets(blocks) -> set:
+    """NAT/IGW 경로가 전혀 없는 라우트 테이블에 연결된 서브넷 이름 집합."""
+    has_egress: Dict[str, bool] = {}
+    for addr, text in blocks:
+        if addr.startswith("resource.aws_route_table."):
+            name = addr.split(".", 2)[2]
+            has_egress[name] = bool(re.search(r"\b(nat_gateway_id|gateway_id)\s*=", text))
+    for addr, text in blocks:
+        if addr.startswith("resource.aws_route."):
+            m = re.search(r"route_table_id\s*=\s*aws_route_table\.(\w+)", text)
+            if m and re.search(r"\b(nat_gateway_id|gateway_id)\s*=", text):
+                has_egress[m.group(1)] = True
+    isolated = set()
+    for addr, text in blocks:
+        if not addr.startswith("resource.aws_route_table_association."):
+            continue
+        rt = re.search(r"route_table_id\s*=\s*aws_route_table\.(\w+)", text)
+        if rt and has_egress.get(rt.group(1)) is False:
+            isolated |= _subnet_refs(text)
+    return isolated
+
+
+def _vpc_endpoints(blocks) -> List[dict]:
+    issues = []
+    isolated = _isolated_subnets(blocks)
+    if not isolated:
+        return issues
+    endpoint_text = "\n".join(t for a, t in blocks if a.startswith("resource.aws_vpc_endpoint."))
+    has_ecr = "ecr.api" in endpoint_text and "ecr.dkr" in endpoint_text
+    for addr, text in blocks:
+        if addr.startswith("resource.aws_ecs_service."):
+            net = re.search(r"network_configuration\s*\{([^{}]*)\}", text)
+            if not net or re.search(r"assign_public_ip\s*=\s*true", net.group(1)):
+                continue
+            hit = _subnet_refs(net.group(1)) & isolated
+            if hit and not has_ecr:
+                issues.append(_issue(
+                    f"{addr}가 NAT/IGW 경로 없는 서브넷({', '.join(sorted(hit))})에서 assign_public_ip=false로 "
+                    f"실행되는데 ecr.api/ecr.dkr VPC 엔드포인트가 없어 컨테이너 이미지를 받지 못해 태스크가 기동하지 않습니다.",
+                    "프라이빗 라우트 테이블에 S3 Gateway 엔드포인트를, 프라이빗 서브넷에 Interface 엔드포인트 "
+                    "ecr.api·ecr.dkr·logs(+태스크가 호출하는 secretsmanager/kms/sqs/sns/events 등)를 "
+                    "private_dns_enabled=true, VPC CIDR 443 인바운드 전용 보안그룹으로 추가하세요. "
+                    "또는 NAT Gateway를 두세요(아웃바운드 전용이라 서비스가 외부에 노출되지는 않습니다).",
+                    category="architecture"))
+        elif addr.startswith("resource.aws_lambda_function."):
+            cfg = re.search(r"vpc_config\s*\{([^{}]*)\}", text)
+            if not cfg:
+                continue
+            hit = _subnet_refs(cfg.group(1)) & isolated
+            if hit and not endpoint_text:
+                issues.append(_issue(
+                    f"{addr}가 NAT/IGW 경로 없는 서브넷({', '.join(sorted(hit))})에 VPC 연결되어 있는데 "
+                    f"VPC 엔드포인트가 하나도 없어 DynamoDB/S3/SQS/SNS/CloudWatch Logs 등 AWS API를 호출하지 못합니다.",
+                    "Lambda가 호출하는 서비스별 VPC 엔드포인트(S3·DynamoDB는 Gateway, 나머지는 Interface)를 추가하거나, "
+                    "VPC 내부 리소스(RDS/ElastiCache)를 쓰지 않는다면 vpc_config를 제거하세요.",
+                    category="architecture"))
+    return issues
+
+
 def lint_hcl(terraform_files: Dict[str, str]) -> List[dict]:
     """리소스 내부 설정 결함 목록 (전부 critical/develop)."""
     if not terraform_files:
         return []
     blocks = _blocks(terraform_files)
     return (_rds(blocks) + _rds_engine_version(blocks) + _cloudfront(blocks)
-            + _sqs_lambda(blocks) + _security_groups(blocks))
+            + _sqs_lambda(blocks) + _security_groups(blocks) + _vpc_endpoints(blocks))

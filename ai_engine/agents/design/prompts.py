@@ -37,6 +37,11 @@ Subnet assignment rules:
     VPN/Direct Connect — reviewers reject an unused NAT Gateway as pure cost. A Lambda that only
     calls AWS APIs (EC2 start/stop, S3, SQS) stays outside the VPC (subnets: null) and never
     justifies a NAT Gateway.
+    An internal-only ECS/Fargate service ("외부 노출 금지") still has to pull images from ECR:
+    a NAT Gateway is outbound-only and does NOT expose the service, so keeping it is acceptable.
+    If you omit nat_gateway for such a service, you MUST state in `description` that private
+    subnets use VPC endpoints (S3 gateway + ecr.api/ecr.dkr/logs and the AWS services the tasks
+    call) — otherwise the tasks cannot start.
     nat_gateway MUST be placed in a PUBLIC subnet (e.g. subnet: "PublicSubnet1").
     NEVER place nat_gateway in a private subnet. NAT Gateway needs to reach the Internet Gateway.
 
