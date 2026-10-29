@@ -14,6 +14,7 @@ import logging
 import os
 from typing import Callable
 
+import yaml
 from langchain_core.runnables import RunnableConfig
 
 from langgraph.graph import END, START, StateGraph
@@ -179,6 +180,13 @@ def run_verify_agent(yaml_output: str, terraform_files: dict) -> dict:
     }
 
 
+def _architecture_name(yaml_text: str | None) -> str | None:
+    try:
+        return (yaml.safe_load(yaml_text or "") or {}).get("architecture", {}).get("name")
+    except (yaml.YAMLError, AttributeError):
+        return None
+
+
 def run_pipeline(
     user_requirements: str,
     previous_yaml: str | None = None,
@@ -203,6 +211,10 @@ def run_pipeline(
     # 검증 결과를 사용자용 설명문으로 변환 (다이어그램·코드와 함께 사용자에게 전달)
     print("[리포트] 사용자용 검증 설명문 생성 중...")
     _emit_progress(on_progress, "summary", "검증 설명문 생성 중")
+    # 설계가 기존과 무관한 새 시스템으로 판단했으면(이름 변경) 수정 턴이 아니므로
+    # 리포트에 이전 설계를 넘기지 않는다 — 넘기면 무관한 두 YAML로 "변경 사항"을 지어낸다
+    if previous_yaml and _architecture_name(previous_yaml) != _architecture_name(result["yaml_output"]):
+        previous_yaml = None
     validation_summary = generate_user_summary(
         result["validation_report"],
         result["validation_passed"],
