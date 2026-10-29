@@ -406,6 +406,17 @@ Generate exactly 4 Terraform files:
   aws_scheduler_schedule with schedule_expression_timezone = "Asia/Seoul" (plus an IAM role
   with scheduler.amazonaws.com trust and lambda:InvokeFunction), NOT aws_cloudwatch_event_rule —
   EventBridge rules evaluate cron in UTC and reviewers flag the time mismatch every time.
+- Scheduled ECS/Fargate task (aws_cloudwatch_event_target with ecs_target, or
+  aws_scheduler_schedule with ecs_parameters): the invoking role needs ecs:RunTask on the task
+  definition AND iam:PassRole on the task definition's execution_role_arn and task_role_arn —
+  without PassRole every scheduled run fails.
+- aws_cloudtrail: the destination bucket needs an aws_s3_bucket_policy with TWO statements for
+  Principal cloudtrail.amazonaws.com — s3:GetBucketAcl on the bucket ARN and s3:PutObject on
+  "${bucket.arn}/AWSLogs/${account_id}/*" (prefix it with s3_key_prefix if you set one) with
+  Condition s3:x-amz-acl = bucket-owner-full-control — and depends_on that policy. When
+  cloud_watch_logs_group_arn is set, also set cloud_watch_logs_role_arn to a role trusted by
+  cloudtrail.amazonaws.com with logs:CreateLogStream and logs:PutLogEvents on
+  "${log_group.arn}:*".
 - SNS used for user notification: create aws_sns_topic_subscription (protocol "email",
   endpoint = var.notification_email, variable with description) so the notification path
   exists in infrastructure, not just the topic.
