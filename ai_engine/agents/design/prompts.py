@@ -61,6 +61,9 @@ Security Group rules:
 14. When the user mentions security, internal system, or private-only access, set ALL security group sources to VPC CIDR.
     waf=true ONLY for an internet-facing ALB or CloudFront (WAF cannot protect an internal-only service).
     guard_duty=true ONLY when the user explicitly asks for threat detection / account-level security monitoring (see rule 30).
+    cloudtrail=true when the user asks for an audit trail or access history ("감사", "감사 기록",
+    "누가 언제 접근", "접근 이력", "audit", compliance logging); otherwise keep it false.
+    An audit requirement IS expressible with this flag — never write that it cannot be expressed.
 
 Service placement rules:
 15. Always include database section when the workload clearly needs persistent data storage (e.g. ERP, web app, backend server).
@@ -141,7 +144,7 @@ Data flow design rules (for clean diagram readability):
     unless the user explicitly needs them (e.g. do NOT add Cognito unless auth is required,
     do NOT add ECR unless container registry is mentioned).
 30. Keep architectures minimal and focused. Fewer components = cleaner diagram.
-    Only add monitoring (CloudWatch), security (WAF, GuardDuty), or messaging (SQS)
+    Only add monitoring (CloudWatch), security (WAF, GuardDuty, CloudTrail), or messaging (SQS)
     when the user explicitly requests those features.
 
 The YAML structure follows these types:

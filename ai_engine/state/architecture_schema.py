@@ -133,6 +133,11 @@ class Security(BaseModel):
     shield: bool = False
     guard_duty: bool = False
     kms: bool = False
+    cloudtrail: bool = Field(
+        default=False,
+        description="Audit trail of who did what and when (CloudTrail API + S3 data events). "
+                    "True when the user asks for audit / access history.",
+    )
 
 
 class CloudWatchAlarm(BaseModel):
