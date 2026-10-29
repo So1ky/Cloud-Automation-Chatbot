@@ -24,6 +24,9 @@ Subnet assignment rules:
    - Internet-facing service: internal=false + PUBLIC subnets.
    - Internal-only service (사내망/VPN/전용선 접근, "내부 직원만", "외부 노출 금지"):
      ALWAYS set internal=true + PRIVATE subnets. NEVER place an internal ALB in public subnets.
+     Without a public domain an ACM certificate cannot be issued, so do NOT promise "HTTPS"
+     in `description` for such a service — say TLS terminates at the VPN / Direct Connect edge —
+     and give its security group inbound port 80 (not 443) from the VPC CIDR.
 7. compute.subnets for EKS/ECS must contain 2+ PRIVATE subnet names in different AZs for high availability.
    NEVER place ECS/EKS/Fargate in a public subnet. Only ALB and NAT Gateway belong in public subnets.
 8. compute.subnets for EC2/Lambda can be a single subnet.
