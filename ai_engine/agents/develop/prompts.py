@@ -272,6 +272,14 @@ Generate exactly 4 Terraform files:
 - NEVER create a VPC endpoint for resources that already live INSIDE the VPC —
   an OpenSearch domain with vpc_options, RDS, ElastiCache. They are reached directly
   through their VPC network interfaces; an endpoint for them is wasted cost (~$8/AZ/month).
+- When the YAML has NO nat_gateway but places ECS/Fargate tasks or a VPC-attached Lambda in
+  private subnets, those subnets have no route to the internet, so you MUST create VPC endpoints
+  or the tasks never start (ECR image pull fails) and AWS API calls hang:
+  - Gateway endpoint for s3 (and dynamodb if used) attached to the private route table.
+  - Interface endpoints for ecr.api, ecr.dkr, logs, plus every AWS service the workload calls
+    (secretsmanager, kms, sqs, sns, events, ssm ...), in the private subnets, private_dns_enabled = true.
+  - A dedicated endpoint security group allowing inbound TCP 443 from the VPC CIDR —
+    do NOT reuse the compute security group (it has no 443 inbound rule).
 
 ## ECS FARGATE Rule
 - When launch_type = "FARGATE", aws_ecs_task_definition MUST have cpu and memory at the TASK level (not only inside container_definitions):
