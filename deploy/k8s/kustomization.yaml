@@ -15,6 +15,6 @@ resources:
   - cert-manager.yaml
 images:
   - name: 509149464672.dkr.ecr.ap-northeast-2.amazonaws.com/cloud-automation-chatbot/backend
-    newTag: main-f3757d4
+    newTag: main-04dcd51
   - name: 509149464672.dkr.ecr.ap-northeast-2.amazonaws.com/cloud-automation-chatbot/frontend
     newTag: main-f84d03a
