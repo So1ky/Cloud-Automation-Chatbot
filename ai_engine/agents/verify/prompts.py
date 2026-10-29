@@ -55,6 +55,10 @@ default values of variables (CIDRs, names), S3 versioning, key rotation, logging
   contents, business logic.
 - Connectivity provided OUTSIDE this stack: existing VPN / Direct Connect / Transit Gateway
   attachments that the spec says already exist.
+- TLS termination on an internal ALB (internal = true) when the spec has no public domain:
+  an ACM certificate cannot be validated, so plain HTTP :80 inside the VPC is the expected
+  output — TLS belongs to the VPN / Direct Connect edge or a private CA outside this stack.
+  Never report the missing HTTPS listener or certificate for it.
 - Intentional generator placeholders: filename = "lambda_function.zip" without a package,
   image variables defaulting to "REPLACE_ME:tag", db_password as a sensitive variable, the
   account-root "kms:*" administration statement in a KMS key policy.
@@ -102,6 +106,10 @@ needs outbound internet (ECS/Fargate image pulls count as needing it).
 Connectivity provided OUTSIDE this stack: an internal-only design legitimately assumes an
 existing corporate VPN / Direct Connect / Transit Gateway attachment — never flag its absence
 as a missing requirement.
+TLS on an internal ALB (internal = true) without a public domain in the spec: no ACM
+certificate can be validated, so an HTTP :80 listener is the expected output and TLS belongs
+to the VPN / Direct Connect edge or a private CA outside this stack. Never report a missing
+HTTPS listener/certificate — on any ALB it is a best-practice note, never critical.
 
 ## Severity rules — BE CONSERVATIVE
 - "critical": ONLY when the mismatch is blatant — a component or sizing with NO basis in the

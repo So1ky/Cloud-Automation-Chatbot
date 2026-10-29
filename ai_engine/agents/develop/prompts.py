@@ -226,6 +226,13 @@ Generate exactly 4 Terraform files:
   - no domain anywhere in the spec → no ACM certificate can be validated, so a single
     HTTP :80 listener and SG ingress ONLY on 80; add a comment on the listener that TLS
     requires a domain and should be enabled before production.
+  - internal = true ALB without a domain → same single HTTP :80 listener (TLS terminates at
+    the VPN / Direct Connect edge or a private CA outside this stack), even if a description
+    in the spec says "HTTPS". NEVER invent a hostname (.local, .internal, example.com) for an
+    aws_acm_certificate — DNS validation of a made-up name never completes and apply hangs.
+    If the spec's security group lists port 443 for such an ALB, use :80 for the listener AND
+    the SG anyway — an HTTP listener on port 443 is never acceptable. NEVER emit an :80 → :443
+    redirect without a :443 listener behind it — the service becomes unreachable.
 - outputs.tf must reference aws_lb.<name>.dns_name, NOT aws_alb.<name>.dns_name
 - Respect the spec's internal flag:
   - internal: true  → aws_lb with internal = true, subnets = PRIVATE subnets
