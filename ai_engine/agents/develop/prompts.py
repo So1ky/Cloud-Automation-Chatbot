@@ -396,11 +396,14 @@ Generate exactly 4 Terraform files:
     (with aws:SourceArn condition on the distribution when possible)
   - CloudWatch Logs encryption → principal logs.<region>.amazonaws.com: kms:Encrypt*, kms:Decrypt*, kms:GenerateDataKey*
   - SNS topic encrypted with this key that CloudWatch alarms publish to → principal
-    cloudwatch.amazonaws.com: kms:Decrypt, kms:GenerateDataKey* (never use alias/aws/sns for an
+    cloudwatch.amazonaws.com: kms:Decrypt, kms:GenerateDataKey*, with Condition StringEquals
+    aws:SourceAccount = account id and ArnLike aws:SourceArn =
+    "arn:aws:cloudwatch:${region}:${account_id}:alarm:*" (never use alias/aws/sns for an
     alarm topic — CloudWatch cannot use the AWS-managed key and notifications are silently dropped)
 - Never reference an SNS topic / SQS queue / bucket ARN inside aws_kms_key.policy when that
   resource is itself encrypted with the key — it creates a dependency cycle (key → topic → key).
-  Grant service principals without resource-ARN conditions, or move the policy to aws_kms_key_policy.
+  Scope service principals with conditions built from strings (account id, region, ARN patterns),
+  never a resource reference — or move the policy to aws_kms_key_policy.
 - ALWAYS also include the account-root statement so the key stays manageable:
   data "aws_caller_identity" "current" {}
   principal AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root", actions ["kms:*"]

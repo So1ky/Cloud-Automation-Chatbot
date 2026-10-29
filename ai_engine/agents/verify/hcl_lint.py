@@ -401,7 +401,7 @@ def _sns_kms_alarms(blocks) -> List[dict]:
         if not addr.startswith("resource.aws_sns_topic."):
             continue
         topic = addr.split(".", 2)[2]
-        if not re.search(rf"aws_sns_topic\.{topic}\.arn\b", alarms):
+        if not re.search(rf"aws_sns_topic\.{re.escape(topic)}\.arn\b", alarms):
             continue
         key = re.search(r"kms_master_key_id\s*=\s*(?:aws_kms_key\.(\w+)\.\w+|\"(alias/aws/sns)\")", text)
         if not key:
@@ -421,8 +421,9 @@ def _sns_kms_alarms(blocks) -> List[dict]:
             f"CloudWatch 알람이 {addr}로 알림을 보내지만 토픽이 KMS로 암호화되어 있고 {reason}. "
             f"알람 상태는 바뀌어도 알림은 오류 없이 전달되지 않습니다.",
             "고객 관리형 키를 쓰고 키 정책에 Principal {Service = \"cloudwatch.amazonaws.com\"}, "
-            "Action [\"kms:Decrypt\", \"kms:GenerateDataKey*\"] 문장을 추가하세요 "
-            "(키 정책 안에서 토픽 ARN을 참조하면 순환 참조가 되므로 조건 없이 두세요).",
+            "Action [\"kms:Decrypt\", \"kms:GenerateDataKey*\"] 문장을 추가하고 Condition으로 "
+            "aws:SourceAccount = 계정 ID, aws:SourceArn ArnLike \"arn:aws:cloudwatch:<region>:<account_id>:alarm:*\"를 "
+            "두세요 (토픽 ARN을 참조하면 순환 참조가 되므로 문자열로 구성).",
             category="architecture"))
     return issues
 
