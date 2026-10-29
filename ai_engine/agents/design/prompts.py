@@ -24,6 +24,9 @@ Subnet assignment rules:
    - Internet-facing service: internal=false + PUBLIC subnets.
    - Internal-only service (사내망/VPN/전용선 접근, "내부 직원만", "외부 노출 금지"):
      ALWAYS set internal=true + PRIVATE subnets. NEVER place an internal ALB in public subnets.
+     Without a public domain an ACM certificate cannot be issued, so do NOT promise "HTTPS"
+     in `description` for such a service — say TLS terminates at the VPN / Direct Connect edge —
+     and give its security group inbound port 80 (not 443) from the VPC CIDR.
 7. compute.subnets for EKS/ECS must contain 2+ PRIVATE subnet names in different AZs for high availability.
    NEVER place ECS/EKS/Fargate in a public subnet. Only ALB and NAT Gateway belong in public subnets.
 8. compute.subnets for EC2/Lambda can be a single subnet.
@@ -37,6 +40,11 @@ Subnet assignment rules:
     VPN/Direct Connect — reviewers reject an unused NAT Gateway as pure cost. A Lambda that only
     calls AWS APIs (EC2 start/stop, S3, SQS) stays outside the VPC (subnets: null) and never
     justifies a NAT Gateway.
+    An internal-only ECS/Fargate service ("외부 노출 금지") still has to pull images from ECR:
+    a NAT Gateway is outbound-only and does NOT expose the service, so keeping it is acceptable.
+    If you omit nat_gateway for such a service, you MUST state in `description` that private
+    subnets use VPC endpoints (S3 gateway + ecr.api/ecr.dkr/logs and the AWS services the tasks
+    call) — otherwise the tasks cannot start.
     nat_gateway MUST be placed in a PUBLIC subnet (e.g. subnet: "PublicSubnet1").
     NEVER place nat_gateway in a private subnet. NAT Gateway needs to reach the Internet Gateway.
 
@@ -53,6 +61,9 @@ Security Group rules:
 14. When the user mentions security, internal system, or private-only access, set ALL security group sources to VPC CIDR.
     waf=true ONLY for an internet-facing ALB or CloudFront (WAF cannot protect an internal-only service).
     guard_duty=true ONLY when the user explicitly asks for threat detection / account-level security monitoring (see rule 30).
+    cloudtrail=true when the user asks for an audit trail or access history ("감사", "감사 기록",
+    "누가 언제 접근", "접근 이력", "audit", compliance logging); otherwise keep it false.
+    An audit requirement IS expressible with this flag — never write that it cannot be expressed.
 
 Service placement rules:
 15. Always include database section when the workload clearly needs persistent data storage (e.g. ERP, web app, backend server).
@@ -133,7 +144,7 @@ Data flow design rules (for clean diagram readability):
     unless the user explicitly needs them (e.g. do NOT add Cognito unless auth is required,
     do NOT add ECR unless container registry is mentioned).
 30. Keep architectures minimal and focused. Fewer components = cleaner diagram.
-    Only add monitoring (CloudWatch), security (WAF, GuardDuty), or messaging (SQS)
+    Only add monitoring (CloudWatch), security (WAF, GuardDuty, CloudTrail), or messaging (SQS)
     when the user explicitly requests those features.
 
 The YAML structure follows these types:

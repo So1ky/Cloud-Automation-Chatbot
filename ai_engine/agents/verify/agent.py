@@ -219,6 +219,11 @@ def verify_node(state: GraphState) -> dict:
         print("[검증 에이전트] validate 통과")
     else:
         print(f"[검증 에이전트] validate 실패 (오류 {len(syntax['errors'])}개)")
+        # 회차별 리포트는 상태에 보존되지 않으므로 오류 본문을 로그에 남긴다
+        for err in syntax["errors"]:
+            loc = f" ({err.get('filename')}:{err.get('line')})" if err.get("filename") else ""
+            detail = f" — {err['detail']}" if err.get("detail") else ""
+            print(f"  - {err.get('summary', '')}{loc}{detail}")
 
     # 2. LLM 보안/모범사례 분석
     print("[검증 에이전트] LLM 보안/모범사례 분석 중...")

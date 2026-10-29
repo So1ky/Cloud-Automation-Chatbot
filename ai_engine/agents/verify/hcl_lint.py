@@ -11,6 +11,11 @@ code_lint가 "명세 컴포넌트가 코드에 있는가"를 보는 데 비해, 
     R4 SQS → Lambda event source mapping에서 큐 visibility_timeout < Lambda timeout
     R5 보안그룹 ingress 0.0.0.0/0 이 80/443 외 포트에 개방
     R6 RDS engine_version이 Extended Support 대상(MySQL 5.7/8.0, PostgreSQL ≤13) → vCPU당 추가 요금
+    R7 NAT/IGW 경로 없는 서브넷의 ECS 서비스(assign_public_ip=false) / VPC Lambda에 VPC 엔드포인트 없음
+       → ECR 이미지 풀·AWS API 호출 불가로 태스크가 기동조차 못 함
+    R8 EventBridge 규칙 타깃/Scheduler가 ECS 태스크를 실행하는데 그 역할에 iam:PassRole 없음
+    R9 CloudTrail 대상 S3 버킷 정책에 cloudtrail 주체의 s3:GetBucketAcl + s3:PutObject 없음
+    R10 CloudTrail → CloudWatch Logs 역할에 logs:CreateLogStream/PutLogEvents 없음 (또는 역할 자체 누락)
 """
 
 from __future__ import annotations
@@ -209,10 +214,176 @@ def _security_groups(blocks) -> List[dict]:
     return issues
 
 
+def _subnet_refs(text: str) -> set:
+    return set(re.findall(r"aws_subnet\.(\w+)", text))
+
+
+def _isolated_subnets(blocks) -> set:
+    """NAT/IGW 경로가 전혀 없는 라우트 테이블에 연결된 서브넷 이름 집합."""
+    has_egress: Dict[str, bool] = {}
+    for addr, text in blocks:
+        if addr.startswith("resource.aws_route_table."):
+            name = addr.split(".", 2)[2]
+            has_egress[name] = bool(re.search(r"\b(nat_gateway_id|gateway_id)\s*=", text))
+    for addr, text in blocks:
+        if addr.startswith("resource.aws_route."):
+            m = re.search(r"route_table_id\s*=\s*aws_route_table\.(\w+)", text)
+            if m and re.search(r"\b(nat_gateway_id|gateway_id)\s*=", text):
+                has_egress[m.group(1)] = True
+    isolated = set()
+    for addr, text in blocks:
+        if not addr.startswith("resource.aws_route_table_association."):
+            continue
+        rt = re.search(r"route_table_id\s*=\s*aws_route_table\.(\w+)", text)
+        if rt and has_egress.get(rt.group(1)) is False:
+            isolated |= _subnet_refs(text)
+    return isolated
+
+
+def _vpc_endpoints(blocks) -> List[dict]:
+    issues = []
+    isolated = _isolated_subnets(blocks)
+    if not isolated:
+        return issues
+    endpoint_text = "\n".join(t for a, t in blocks if a.startswith("resource.aws_vpc_endpoint."))
+    has_ecr = "ecr.api" in endpoint_text and "ecr.dkr" in endpoint_text
+    for addr, text in blocks:
+        if addr.startswith("resource.aws_ecs_service."):
+            net = re.search(r"network_configuration\s*\{([^{}]*)\}", text)
+            if not net or re.search(r"assign_public_ip\s*=\s*true", net.group(1)):
+                continue
+            hit = _subnet_refs(net.group(1)) & isolated
+            if hit and not has_ecr:
+                issues.append(_issue(
+                    f"{addr}가 NAT/IGW 경로 없는 서브넷({', '.join(sorted(hit))})에서 assign_public_ip=false로 "
+                    f"실행되는데 ecr.api/ecr.dkr VPC 엔드포인트가 없어 컨테이너 이미지를 받지 못해 태스크가 기동하지 않습니다.",
+                    "프라이빗 라우트 테이블에 S3 Gateway 엔드포인트를, 프라이빗 서브넷에 Interface 엔드포인트 "
+                    "ecr.api·ecr.dkr·logs(+태스크가 호출하는 secretsmanager/kms/sqs/sns/events 등)를 "
+                    "private_dns_enabled=true, VPC CIDR 443 인바운드 전용 보안그룹으로 추가하세요. "
+                    "또는 NAT Gateway를 두세요(아웃바운드 전용이라 서비스가 외부에 노출되지는 않습니다).",
+                    category="architecture"))
+        elif addr.startswith("resource.aws_lambda_function."):
+            cfg = re.search(r"vpc_config\s*\{([^{}]*)\}", text)
+            if not cfg:
+                continue
+            hit = _subnet_refs(cfg.group(1)) & isolated
+            if hit and not endpoint_text:
+                issues.append(_issue(
+                    f"{addr}가 NAT/IGW 경로 없는 서브넷({', '.join(sorted(hit))})에 VPC 연결되어 있는데 "
+                    f"VPC 엔드포인트가 하나도 없어 DynamoDB/S3/SQS/SNS/CloudWatch Logs 등 AWS API를 호출하지 못합니다.",
+                    "Lambda가 호출하는 서비스별 VPC 엔드포인트(S3·DynamoDB는 Gateway, 나머지는 Interface)를 추가하거나, "
+                    "VPC 내부 리소스(RDS/ElastiCache)를 쓰지 않는다면 vpc_config를 제거하세요.",
+                    category="architecture"))
+    return issues
+
+
+def _role_policy_text(role: str, blocks, by_addr: Dict[str, str]) -> str | None:
+    """역할에 붙은 정책 본문을 모두 이어 붙인다. 내용을 알 수 없는 관리형 정책 ARN이 붙어 있으면 None."""
+    texts = [by_addr.get(f"resource.aws_iam_role.{role}", "")]
+    if re.search(r"managed_policy_arns\s*=", texts[0]):
+        return None
+    ref = rf"role\s*=\s*aws_iam_role\.{role}\.(?:id|name)\b"
+    for addr, text in blocks:
+        if addr.startswith("resource.aws_iam_role_policy.") and re.search(ref, text):
+            texts.append(_with_policy_documents(text, by_addr))
+        elif addr.startswith("resource.aws_iam_role_policy_attachment.") and re.search(ref, text):
+            m = re.search(r"policy_arn\s*=\s*aws_iam_policy\.(\w+)\.arn", text)
+            if not m:
+                return None  # AWS 관리형 정책 등 내용을 모름 → 판정 보류
+            texts.append(_with_policy_documents(by_addr.get(f"resource.aws_iam_policy.{m.group(1)}", ""), by_addr))
+    texts[0] = _with_policy_documents(texts[0], by_addr)
+    return "\n".join(texts)
+
+
+def _has_action(policy: str, action: str) -> bool:
+    service = action.split(":")[0]
+    return action in policy or f"{service}:*" in policy or re.search(r'Action\s*=\s*"\*"', policy) is not None
+
+
+def _ecs_pass_role(blocks) -> List[dict]:
+    issues = []
+    by_addr = dict(blocks)
+    for addr, text in blocks:
+        if addr.startswith("resource.aws_cloudwatch_event_target.") and "ecs_target" in text:
+            pass
+        elif addr.startswith("resource.aws_scheduler_schedule.") and "ecs_parameters" in text:
+            pass
+        else:
+            continue
+        role = re.search(r"role_arn\s*=\s*aws_iam_role\.(\w+)\.arn", text)
+        task = re.search(r"task_definition_arn\s*=\s*aws_ecs_task_definition\.(\w+)\.", text)
+        if not (role and task):
+            continue
+        task_text = by_addr.get(f"resource.aws_ecs_task_definition.{task.group(1)}", "")
+        if not re.search(r"\b(execution_role_arn|task_role_arn)\s*=", task_text):
+            continue
+        policy = _role_policy_text(role.group(1), blocks, by_addr)
+        if policy is None or _has_action(policy, "iam:PassRole"):
+            continue
+        issues.append(_issue(
+            f"{addr}가 aws_ecs_task_definition.{task.group(1)}을 실행하는데 실행 역할 aws_iam_role.{role.group(1)}에 "
+            f"iam:PassRole 권한이 없어 태스크의 execution/task 역할을 전달하지 못해 예약 실행이 매번 실패합니다.",
+            f"aws_iam_role.{role.group(1)}의 정책에 ecs:RunTask와 함께 Action \"iam:PassRole\", "
+            f"Resource = [태스크 정의의 execution_role_arn, task_role_arn] 문장을 추가하세요.",
+            category="architecture"))
+    return issues
+
+
+def _cloudtrail(blocks) -> List[dict]:
+    issues = []
+    by_addr = dict(blocks)
+    for addr, text in blocks:
+        if not addr.startswith("resource.aws_cloudtrail."):
+            continue
+        # R9: 대상 버킷 정책
+        b = re.search(r"s3_bucket_name\s*=\s*aws_s3_bucket\.(\w+)\.(?:id|bucket)\b", text)
+        if b:
+            bucket = b.group(1)
+            ref = rf"bucket\s*=\s*aws_s3_bucket\.{bucket}\.(?:id|bucket)\b"
+            policies = "\n".join(_with_policy_documents(t, by_addr) for a, t in blocks
+                                  if a.startswith("resource.aws_s3_bucket_policy.") and re.search(ref, t))
+            ok = ("cloudtrail.amazonaws.com" in policies and "s3:GetBucketAcl" in policies
+                  and "s3:PutObject" in policies)
+            if not ok:
+                issues.append(_issue(
+                    f"{addr}의 대상 버킷 aws_s3_bucket.{bucket}에 cloudtrail.amazonaws.com의 s3:GetBucketAcl과 "
+                    f"s3:PutObject를 모두 허용하는 버킷 정책이 없어 트레일 생성이 InsufficientS3BucketPolicyException으로 실패합니다.",
+                    f"aws_s3_bucket_policy(bucket = aws_s3_bucket.{bucket}.id)에 Principal {{Service = \"cloudtrail.amazonaws.com\"}} "
+                    f"문장 두 개를 넣으세요: s3:GetBucketAcl on 버킷 ARN, s3:PutObject on "
+                    f"\"${{버킷 ARN}}/<s3_key_prefix/>AWSLogs/${{account_id}}/*\" (Condition s3:x-amz-acl = bucket-owner-full-control). "
+                    f"aws_cloudtrail에는 depends_on = [그 버킷 정책]을 두세요.",
+                    category="architecture"))
+        # R10: CloudWatch Logs 전달 역할
+        if not re.search(r"cloud_watch_logs_group_arn\s*=", text):
+            continue
+        role = re.search(r"cloud_watch_logs_role_arn\s*=\s*aws_iam_role\.(\w+)\.arn", text)
+        if not re.search(r"cloud_watch_logs_role_arn\s*=", text):
+            issues.append(_issue(
+                f"{addr}에 cloud_watch_logs_group_arn만 있고 cloud_watch_logs_role_arn이 없어 CloudWatch Logs 전달이 거부됩니다.",
+                "cloudtrail.amazonaws.com 신뢰 역할을 만들어 logs:CreateLogStream·logs:PutLogEvents를 로그 그룹 ARN에 허용하고 "
+                "cloud_watch_logs_role_arn에 지정하세요.",
+                category="architecture"))
+            continue
+        if not role:
+            continue
+        policy = _role_policy_text(role.group(1), blocks, by_addr)
+        if policy is None:
+            continue
+        if not (_has_action(policy, "logs:CreateLogStream") and _has_action(policy, "logs:PutLogEvents")):
+            issues.append(_issue(
+                f"{addr}의 CloudWatch Logs 전달 역할 aws_iam_role.{role.group(1)}에 logs:CreateLogStream·logs:PutLogEvents "
+                f"권한이 없어 트레일 생성 또는 로그 전달이 실패합니다.",
+                f"aws_iam_role_policy(role = aws_iam_role.{role.group(1)}.id)로 Action [\"logs:CreateLogStream\", "
+                f"\"logs:PutLogEvents\"], Resource = \"${{로그 그룹 ARN}}:*\" 를 추가하세요.",
+                category="architecture"))
+    return issues
+
+
 def lint_hcl(terraform_files: Dict[str, str]) -> List[dict]:
     """리소스 내부 설정 결함 목록 (전부 critical/develop)."""
     if not terraform_files:
         return []
     blocks = _blocks(terraform_files)
     return (_rds(blocks) + _rds_engine_version(blocks) + _cloudfront(blocks)
-            + _sqs_lambda(blocks) + _security_groups(blocks))
+            + _sqs_lambda(blocks) + _security_groups(blocks) + _vpc_endpoints(blocks)
+            + _ecs_pass_role(blocks) + _cloudtrail(blocks))

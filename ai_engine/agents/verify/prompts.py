@@ -8,7 +8,7 @@ addresses. Do not report anything the checklist does not cover, except under ite
 
 ## Checklist
 1. Spec coverage — every component in the YAML (vpc/subnets, compute, load_balancer, database,
-   storage, cdn, auth, messaging, streaming, security.waf/guard_duty/kms, iam, auto_scaling,
+   storage, cdn, auth, messaging, streaming, security.waf/guard_duty/kms/cloudtrail, iam, auto_scaling,
    dns, secrets) has a corresponding Terraform resource. Missing → critical, fix_target
    "develop", list each missing component.
 2. Spec placement — ECS/EKS/EC2/RDS/OpenSearch in the PRIVATE subnets the spec names, ALB in
@@ -48,7 +48,14 @@ non-80/443 ports.
 (c) data is directly exposed (public database, hardcoded secrets, admin ports open to the internet)
 Everything else is "warning" (works but violates best practice) or "info". These are NEVER
 critical: HTTPS listener/certificate presence, certificate validation ordering, IAM scoping,
-default values of variables (CIDRs, names), S3 versioning, key rotation, logging/monitoring gaps.
+default values of variables (CIDRs, names), S3 versioning, key rotation, logging/monitoring gaps,
+database row-level audit (pgaudit, Database Activity Streams) — the stack's audit scope is
+CloudTrail (API + S3 data events) plus RDS engine log exports; row-level audit is "warning" at most.
+Transport TLS: ONLY for an internal ALB (internal = true) when the spec contains no domain at
+all, plain HTTP :80 inside the VPC is the expected output (no ACM certificate can be validated;
+TLS terminates at the VPN / Direct Connect edge or a private CA outside this stack) — report it
+as exactly one "info" note so the user sees it. Any other ALB (internal = false, or a domain in
+the spec) without an HTTPS listener is still reported as "warning".
 
 ## Out of scope — never report
 - Application-level behavior: queue consumers, SNS subscribers/per-user routing, container image
@@ -102,6 +109,8 @@ needs outbound internet (ECS/Fargate image pulls count as needing it).
 Connectivity provided OUTSIDE this stack: an internal-only design legitimately assumes an
 existing corporate VPN / Direct Connect / Transit Gateway attachment — never flag its absence
 as a missing requirement.
+Transport security (HTTPS listeners, certificates) is the security reviewer's scope, not cost
+optimization — do not report it here.
 
 ## Severity rules — BE CONSERVATIVE
 - "critical": ONLY when the mismatch is blatant — a component or sizing with NO basis in the

@@ -171,6 +171,28 @@ Generate exactly 4 Terraform files:
     enable = true
   }
 
+- When the spec includes security.cloudtrail = true, ALWAYS generate:
+  - a DEDICATED audit bucket (aws_s3_bucket + aws_s3_bucket_public_access_block all true +
+    aws_s3_bucket_server_side_encryption_configuration; with security.kms = true use the
+    customer-managed key) and its bucket policy per the Recurring-Defect Checklist
+    (cloudtrail.amazonaws.com: s3:GetBucketAcl + s3:PutObject)
+  - aws_cloudtrail with is_multi_region_trail = true, enable_log_file_validation = true,
+    include_global_service_events = true, depends_on = [the bucket policy], and kms_key_id
+    when security.kms = true (apply the KMS Key Policy Rule for cloudtrail.amazonaws.com)
+  - an event_selector recording S3 object-level access ("누가 언제 데이터에 접근") for the
+    spec's storage buckets (not the audit bucket itself):
+    event_selector {
+      read_write_type           = "All"
+      include_management_events = true
+      data_resource {
+        type   = "AWS::S3::Object"
+        values = ["${aws_s3_bucket.<data_bucket>.arn}/"]
+      }
+    }
+  - CloudWatch Logs delivery ONLY when the spec's monitoring lists a CloudTrail log group:
+    then set cloud_watch_logs_group_arn = "${log_group.arn}:*" and cloud_watch_logs_role_arn
+    per the Recurring-Defect Checklist.
+
 ## EIP Rule (AWS Provider v5)
 - NEVER use `vpc = true` inside aws_eip — it is deprecated
 - ALWAYS use `domain = "vpc"` instead:
@@ -226,6 +248,14 @@ Generate exactly 4 Terraform files:
   - no domain anywhere in the spec → no ACM certificate can be validated, so a single
     HTTP :80 listener and SG ingress ONLY on 80; add a comment on the listener that TLS
     requires a domain and should be enabled before production.
+  - internal = true ALB without a domain → same single HTTP :80 listener (TLS terminates at
+    the VPN / Direct Connect edge or a private CA outside this stack), even if a description
+    in the spec says "HTTPS". ALWAYS put this comment directly above that listener:
+    # TLS 미적용: 공개 도메인이 없어 ACM 인증서 검증 불가. VPN/전용선 경계 또는 ACM Private CA로 TLS를 적용하세요. NEVER invent a hostname (.local, .internal, example.com) for an
+    aws_acm_certificate — DNS validation of a made-up name never completes and apply hangs.
+    If the spec's security group lists port 443 for such an ALB, use :80 for the listener AND
+    the SG anyway — an HTTP listener on port 443 is never acceptable. NEVER emit an :80 → :443
+    redirect without a :443 listener behind it — the service becomes unreachable.
 - outputs.tf must reference aws_lb.<name>.dns_name, NOT aws_alb.<name>.dns_name
 - Respect the spec's internal flag:
   - internal: true  → aws_lb with internal = true, subnets = PRIVATE subnets
@@ -272,6 +302,14 @@ Generate exactly 4 Terraform files:
 - NEVER create a VPC endpoint for resources that already live INSIDE the VPC —
   an OpenSearch domain with vpc_options, RDS, ElastiCache. They are reached directly
   through their VPC network interfaces; an endpoint for them is wasted cost (~$8/AZ/month).
+- When the YAML has NO nat_gateway but places ECS/Fargate tasks or a VPC-attached Lambda in
+  private subnets, those subnets have no route to the internet, so you MUST create VPC endpoints
+  or the tasks never start (ECR image pull fails) and AWS API calls hang:
+  - Gateway endpoint for s3 (and dynamodb if used) attached to the private route table.
+  - Interface endpoints for ecr.api, ecr.dkr, logs, plus every AWS service the workload calls
+    (secretsmanager, kms, sqs, sns, events, ssm ...), in the private subnets, private_dns_enabled = true.
+  - A dedicated endpoint security group allowing inbound TCP 443 from the VPC CIDR —
+    do NOT reuse the compute security group (it has no 443 inbound rule).
 
 ## ECS FARGATE Rule
 - When launch_type = "FARGATE", aws_ecs_task_definition MUST have cpu and memory at the TASK level (not only inside container_definitions):
@@ -390,6 +428,17 @@ Generate exactly 4 Terraform files:
   aws_scheduler_schedule with schedule_expression_timezone = "Asia/Seoul" (plus an IAM role
   with scheduler.amazonaws.com trust and lambda:InvokeFunction), NOT aws_cloudwatch_event_rule —
   EventBridge rules evaluate cron in UTC and reviewers flag the time mismatch every time.
+- Scheduled ECS/Fargate task (aws_cloudwatch_event_target with ecs_target, or
+  aws_scheduler_schedule with ecs_parameters): the invoking role needs ecs:RunTask on the task
+  definition AND iam:PassRole on the task definition's execution_role_arn and task_role_arn —
+  without PassRole every scheduled run fails.
+- aws_cloudtrail: the destination bucket needs an aws_s3_bucket_policy with TWO statements for
+  Principal cloudtrail.amazonaws.com — s3:GetBucketAcl on the bucket ARN and s3:PutObject on
+  "${bucket.arn}/AWSLogs/${account_id}/*" (prefix it with s3_key_prefix if you set one) with
+  Condition s3:x-amz-acl = bucket-owner-full-control — and depends_on that policy. When
+  cloud_watch_logs_group_arn is set, also set cloud_watch_logs_role_arn to a role trusted by
+  cloudtrail.amazonaws.com with logs:CreateLogStream and logs:PutLogEvents on
+  "${log_group.arn}:*".
 - SNS used for user notification: create aws_sns_topic_subscription (protocol "email",
   endpoint = var.notification_email, variable with description) so the notification path
   exists in infrastructure, not just the topic.
