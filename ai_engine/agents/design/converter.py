@@ -379,7 +379,7 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
         resources[rid] = {"Type": "AWS::SecretsManager::Secret"}
         cloud_support.append(rid)
 
-    # 보안 서비스 렌더링 (security 섹션 — KMS/WAF/GuardDuty/Shield)
+    # 보안 서비스 렌더링 (security 섹션 — KMS/WAF/GuardDuty/Shield/CloudTrail)
     security_cfg = arch.get("security", {}) or {}
     kms_exists = security_cfg.get("kms", False)
     if kms_exists:
@@ -395,6 +395,9 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
     if security_cfg.get("shield", False):
         resources["Shield"] = {"Type": "AWS::Shield"}
         cloud_support.append("Shield")
+    if security_cfg.get("cloudtrail", False):
+        resources["CloudTrail"] = {"Type": "AWS::CloudTrail"}
+        cloud_support.append("CloudTrail")
 
     # ── 9b. aws_cloud_children 순서 조립 ────────────────────────────────────
     # 데이터 흐름 순서:

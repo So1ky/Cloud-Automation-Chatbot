@@ -171,6 +171,28 @@ Generate exactly 4 Terraform files:
     enable = true
   }
 
+- When the spec includes security.cloudtrail = true, ALWAYS generate:
+  - a DEDICATED audit bucket (aws_s3_bucket + aws_s3_bucket_public_access_block all true +
+    aws_s3_bucket_server_side_encryption_configuration; with security.kms = true use the
+    customer-managed key) and its bucket policy per the Recurring-Defect Checklist
+    (cloudtrail.amazonaws.com: s3:GetBucketAcl + s3:PutObject)
+  - aws_cloudtrail with is_multi_region_trail = true, enable_log_file_validation = true,
+    include_global_service_events = true, depends_on = [the bucket policy], and kms_key_id
+    when security.kms = true (apply the KMS Key Policy Rule for cloudtrail.amazonaws.com)
+  - an event_selector recording S3 object-level access ("누가 언제 데이터에 접근") for the
+    spec's storage buckets (not the audit bucket itself):
+    event_selector {
+      read_write_type           = "All"
+      include_management_events = true
+      data_resource {
+        type   = "AWS::S3::Object"
+        values = ["${aws_s3_bucket.<data_bucket>.arn}/"]
+      }
+    }
+  - CloudWatch Logs delivery ONLY when the spec's monitoring lists a CloudTrail log group:
+    then set cloud_watch_logs_group_arn = "${log_group.arn}:*" and cloud_watch_logs_role_arn
+    per the Recurring-Defect Checklist.
+
 ## EIP Rule (AWS Provider v5)
 - NEVER use `vpc = true` inside aws_eip — it is deprecated
 - ALWAYS use `domain = "vpc"` instead:
