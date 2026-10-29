@@ -228,7 +228,8 @@ Generate exactly 4 Terraform files:
     requires a domain and should be enabled before production.
   - internal = true ALB without a domain → same single HTTP :80 listener (TLS terminates at
     the VPN / Direct Connect edge or a private CA outside this stack), even if a description
-    in the spec says "HTTPS". NEVER invent a hostname (.local, .internal, example.com) for an
+    in the spec says "HTTPS". ALWAYS put this comment directly above that listener:
+    # TLS 미적용: 공개 도메인이 없어 ACM 인증서 검증 불가. VPN/전용선 경계 또는 ACM Private CA로 TLS를 적용하세요. NEVER invent a hostname (.local, .internal, example.com) for an
     aws_acm_certificate — DNS validation of a made-up name never completes and apply hangs.
     If the spec's security group lists port 443 for such an ALB, use :80 for the listener AND
     the SG anyway — an HTTP listener on port 443 is never acceptable. NEVER emit an :80 → :443
