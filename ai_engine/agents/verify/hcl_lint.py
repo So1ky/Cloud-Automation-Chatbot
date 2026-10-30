@@ -353,6 +353,18 @@ def _cloudtrail(blocks) -> List[dict]:
                     f"\"${{버킷 ARN}}/<s3_key_prefix/>AWSLogs/${{account_id}}/*\" (Condition s3:x-amz-acl = bucket-owner-full-control). "
                     f"aws_cloudtrail에는 depends_on = [그 버킷 정책]을 두세요.",
                     category="architecture"))
+            # R9b: s3_key_prefix가 있으면 CloudTrail은 <prefix>/AWSLogs/... 에 기록한다
+            prefix = re.search(r's3_key_prefix\s*=\s*"([^"$]+)"', text)
+            if ok and prefix:
+                p = prefix.group(1).strip("/")
+                if f"{p}/AWSLogs" not in policies and not re.search(r'\.arn\}/\*"', policies):
+                    issues.append(_issue(
+                        f"{addr}의 s3_key_prefix = \"{p}\"라 CloudTrail은 \"{p}/AWSLogs/<account_id>/\" 아래에 기록하지만 "
+                        f"aws_s3_bucket.{bucket} 버킷 정책의 s3:PutObject 경로에 이 접두어가 없어 "
+                        f"트레일 생성이 InsufficientS3BucketPolicyException으로 실패합니다.",
+                        f"버킷 정책 PutObject Resource를 \"${{버킷 ARN}}/{p}/AWSLogs/${{account_id}}/*\"로 맞추거나 "
+                        f"s3_key_prefix를 제거하세요.",
+                        category="architecture"))
         # R10: CloudWatch Logs 전달 역할
         if not re.search(r"cloud_watch_logs_group_arn\s*=", text):
             continue
@@ -379,6 +391,84 @@ def _cloudtrail(blocks) -> List[dict]:
     return issues
 
 
+def _kms_key_policy(name: str, blocks, by_addr: Dict[str, str]) -> str:
+    """aws_kms_key.<name>의 키 정책 본문 (인라인 policy + 별도 aws_kms_key_policy)."""
+    return "\n".join(_with_policy_documents(t, by_addr) for a, t in blocks
+                     if a == f"resource.aws_kms_key.{name}"
+                     or (a.startswith("resource.aws_kms_key_policy.") and re.search(rf"aws_kms_key\.{name}\.", t)))
+
+
+def _sns_kms_alarms(blocks) -> List[dict]:
+    """R11: KMS로 암호화된 SNS 토픽을 CloudWatch 알람이 쓰면 키 정책에 cloudwatch 주체가 필요하다."""
+    issues = []
+    by_addr = dict(blocks)
+    alarms = "\n".join(t for a, t in blocks if a.startswith((
+        "resource.aws_cloudwatch_metric_alarm.", "resource.aws_cloudwatch_composite_alarm.")))
+    for addr, text in blocks:
+        if not addr.startswith("resource.aws_sns_topic."):
+            continue
+        topic = addr.split(".", 2)[2]
+        if not re.search(rf"aws_sns_topic\.{re.escape(topic)}\.arn\b", alarms):
+            continue
+        key = re.search(r"kms_master_key_id\s*=\s*(?:aws_kms_key\.(\w+)\.\w+|\"(alias/aws/sns)\")", text)
+        if not key:
+            continue
+        if key.group(2):
+            reason = "AWS 관리형 키(alias/aws/sns)는 키 정책을 바꿀 수 없어 CloudWatch가 사용할 수 없습니다"
+        else:
+            name = key.group(1)
+            if "cloudwatch.amazonaws.com" in _kms_key_policy(name, blocks, by_addr):
+                continue
+            reason = f"aws_kms_key.{name}의 키 정책에 cloudwatch.amazonaws.com 주체가 없습니다"
+        issues.append(_issue(
+            f"CloudWatch 알람이 {addr}로 알림을 보내지만 토픽이 KMS로 암호화되어 있고 {reason}. "
+            f"알람 상태는 바뀌어도 알림은 오류 없이 전달되지 않습니다.",
+            "고객 관리형 키를 쓰고 키 정책에 Principal {Service = \"cloudwatch.amazonaws.com\"}, "
+            "Action [\"kms:Decrypt\", \"kms:GenerateDataKey*\"] 문장을 추가하고 Condition으로 "
+            "aws:SourceAccount = 계정 ID, aws:SourceArn ArnLike \"arn:aws:cloudwatch:<region>:<account_id>:alarm:*\"를 "
+            "두세요 (토픽 ARN을 참조하면 순환 참조가 되므로 문자열로 구성).",
+            category="architecture"))
+    return issues
+
+
+def _eventbridge_kms(blocks) -> List[dict]:
+    """R12: EventBridge 규칙 대상인 SQS/SNS가 KMS로 암호화되어 있으면 키 정책에 events 주체가 필요하다."""
+    issues = []
+    by_addr = dict(blocks)
+    for addr, text in blocks:
+        if not addr.startswith("resource.aws_cloudwatch_event_target."):
+            continue
+        dest = re.search(r"\barn\s*=\s*aws_(sqs_queue|sns_topic)\.(\w+)\.arn\b", text)
+        if not dest:
+            continue
+        kind, name = dest.groups()
+        target_addr = f"resource.aws_{kind}.{name}"
+        key = re.search(r"kms_master_key_id\s*=\s*(?:aws_kms_key\.(\w+)\.\w+|\"(alias/aws/(?:sqs|sns))\")",
+                        by_addr.get(target_addr, ""))
+        if not key:
+            continue
+        if key.group(2):
+            reason = f"AWS 관리형 키({key.group(2)})는 키 정책을 바꿀 수 없어 EventBridge가 사용할 수 없습니다"
+        else:
+            kms = key.group(1)
+            if "events.amazonaws.com" in _kms_key_policy(kms, blocks, by_addr):
+                continue
+            # 실행 역할 경로: 역할 정책에 데이터 키 권한이 있으면 판정 보류 (오탐 방지)
+            role = re.search(r"role_arn\s*=\s*aws_iam_role\.(\w+)\.arn", text)
+            policy = _role_policy_text(role.group(1), blocks, by_addr) if role else ""
+            if policy is None or (policy and _has_action(policy, "kms:GenerateDataKey")):
+                continue
+            reason = f"aws_kms_key.{kms}의 키 정책에 events.amazonaws.com 주체가 없습니다"
+        issues.append(_issue(
+            f"{addr}가 {target_addr}로 이벤트를 보내지만 대상이 KMS로 암호화되어 있고 {reason}. "
+            f"규칙은 실행돼도 메시지는 오류 없이 전달되지 않습니다.",
+            "고객 관리형 키를 쓰고 키 정책에 Principal {Service = \"events.amazonaws.com\"}, "
+            "Action [\"kms:Decrypt\", \"kms:GenerateDataKey\"], Resource \"*\" 문장을 추가하세요. "
+            "aws:SourceAccount/aws:SourceArn 조건은 EventBridge 전달 시 채워지지 않아 오히려 전달이 끊기므로 넣지 마세요.",
+            category="architecture"))
+    return issues
+
+
 def lint_hcl(terraform_files: Dict[str, str]) -> List[dict]:
     """리소스 내부 설정 결함 목록 (전부 critical/develop)."""
     if not terraform_files:
@@ -386,4 +476,5 @@ def lint_hcl(terraform_files: Dict[str, str]) -> List[dict]:
     blocks = _blocks(terraform_files)
     return (_rds(blocks) + _rds_engine_version(blocks) + _cloudfront(blocks)
             + _sqs_lambda(blocks) + _security_groups(blocks) + _vpc_endpoints(blocks)
-            + _ecs_pass_role(blocks) + _cloudtrail(blocks))
+            + _ecs_pass_role(blocks) + _cloudtrail(blocks) + _sns_kms_alarms(blocks)
+            + _eventbridge_kms(blocks))
