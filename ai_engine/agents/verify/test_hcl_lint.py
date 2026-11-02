@@ -249,5 +249,40 @@ class CognitoApiAuthTests(unittest.TestCase):
         self.assertEqual(_run(HTTP_API + _route("default", "http", "$default")), [])
 
 
+class ApigwLambdaPermissionTests(unittest.TestCase):
+    def _perm(self, source_arn):
+        return ('resource "aws_lambda_permission" "p" {\n  principal = "apigateway.amazonaws.com"\n'
+                f'  source_arn = {source_arn}\n}}\n')
+
+    def test_bare_execution_arn_flagged(self):
+        issues = _run(self._perm("aws_apigatewayv2_api.ws.execution_arn"))
+        self.assertEqual(len(issues), 1)
+        self.assertIn("403", issues[0]["description"])
+
+    def test_with_suffix_ok(self):
+        self.assertEqual(_run(self._perm('"${aws_apigatewayv2_api.ws.execution_arn}/*/*"')), [])
+        self.assertEqual(_run(self._perm('"${aws_apigatewayv2_api.ws.execution_arn}/authorizers/*"')), [])
+
+    def test_other_principal_ignored(self):
+        text = 'resource "aws_lambda_permission" "p" {\n  principal = "s3.amazonaws.com"\n  source_arn = aws_s3_bucket.b.arn\n}\n'
+        self.assertEqual(_run(text), [])
+
+
+class WebsocketDefaultStageTests(unittest.TestCase):
+    def test_websocket_default_stage_flagged(self):
+        text = WS_API + 'resource "aws_apigatewayv2_stage" "s" {\n  api_id = aws_apigatewayv2_api.ws.id\n  name = "$default"\n}\n'
+        issues = _run(text)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("$default", issues[0]["description"])
+
+    def test_http_default_stage_ok(self):
+        text = HTTP_API + 'resource "aws_apigatewayv2_stage" "s" {\n  api_id = aws_apigatewayv2_api.http.id\n  name = "$default"\n}\n'
+        self.assertEqual(_run(text), [])
+
+    def test_websocket_named_stage_ok(self):
+        text = WS_API + 'resource "aws_apigatewayv2_stage" "s" {\n  api_id = aws_apigatewayv2_api.ws.id\n  name = var.environment\n}\n'
+        self.assertEqual(_run(text), [])
+
+
 if __name__ == "__main__":
     unittest.main()

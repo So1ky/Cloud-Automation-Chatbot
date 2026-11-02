@@ -69,7 +69,8 @@ def _digest(report: dict, passed: bool) -> dict:
             "skipped": cost.get("skipped", True),
             "total_monthly_cost_usd": cost.get("total_monthly_cost"),
             # 총액이 1달러 미만 = 사실상 사용량 기반 과금 리소스뿐(서버리스). "과금 리소스 없음"으로 오해하지 않게 표시
-            "usage_based_only": not cost.get("skipped", True) and total < 1.0 and bool(cost.get("resources")),
+            # (resources는 비용 > 0인 것만 담기므로 전부 사용량 과금이면 빈 목록 — 조건에 넣으면 안 됨)
+            "usage_based_only": not cost.get("skipped", True) and total < 1.0,
             "top_resources": (cost.get("resources") or [])[:3],
             "finops_tips": [f.get("policy") for f in (cost.get("finops_issues") or [])[:3]],
         },
