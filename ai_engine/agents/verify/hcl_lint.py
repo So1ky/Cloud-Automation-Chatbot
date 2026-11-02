@@ -20,6 +20,9 @@ code_lint가 "명세 컴포넌트가 코드에 있는가"를 보는 데 비해, 
     R12 EventBridge 대상 SQS/SNS가 KMS 암호화인데 키 정책에 events 주체 없음
     R13 Cognito User Pool이 있는데 API Gateway에 authorizer가 연결되지 않음 (HTTP API 라우트 /
         WebSocket $connect / REST 메서드) → 로그인 없이 누구나 API 호출 가능
+    R14 API Gateway → Lambda 호출 권한(aws_lambda_permission)의 source_arn이 접미사 없는 execution_arn
+        → 실제 호출자 ARN(…/stage/route, …/authorizers/id)과 매치되지 않아 403
+    R15 WebSocket API의 스테이지 이름이 "$default" → HTTP API 전용이라 apply 실패
 """
 
 from __future__ import annotations
@@ -530,6 +533,50 @@ def _cognito_api_auth(blocks) -> List[dict]:
     return issues
 
 
+def _apigw_lambda_permission(blocks) -> List[dict]:
+    """R14: API Gateway가 Lambda를 부르는 권한의 source_arn이 접미사 없는 execution_arn이면 호출이 403으로 막힌다.
+
+    실제 호출자 ARN은 `<execution_arn>/<stage>/<route>` 또는 `<execution_arn>/authorizers/<id>`라
+    `aws_apigatewayv2_api.x.execution_arn` 그대로는 어떤 호출과도 매치되지 않는다.
+    """
+    issues = []
+    for addr, text in blocks:
+        if not addr.startswith("resource.aws_lambda_permission."):
+            continue
+        if "apigateway.amazonaws.com" not in text:
+            continue
+        m = re.search(r"\bsource_arn\s*=\s*(aws_(?:apigatewayv2_api|api_gateway_rest_api)\.\w+\.execution_arn)\s*$",
+                      text, re.M)
+        if not m:
+            continue
+        issues.append(_issue(
+            f"{addr}의 source_arn이 {m.group(1)} 그대로입니다. 실제 호출자 ARN에는 스테이지/라우트(또는 "
+            f"authorizers/<id>) 접미사가 붙어 이 값과 매치되지 않으므로 API Gateway의 Lambda 호출이 403으로 거부됩니다.",
+            "source_arn에 접미사를 붙이세요: 통합 호출은 \"${…execution_arn}/*/*\", "
+            "authorizer 호출은 \"${…execution_arn}/authorizers/*\".",
+            category="architecture"))
+    return issues
+
+
+def _websocket_default_stage(blocks) -> List[dict]:
+    """R15: WebSocket API에 "$default" 스테이지는 없다(HTTP API 전용) → apply 실패."""
+    issues = []
+    ws_apis = {addr.split(".")[-1] for addr, text in blocks
+               if addr.startswith("resource.aws_apigatewayv2_api.")
+               and re.search(r'\bprotocol_type\s*=\s*"WEBSOCKET"', text)}
+    for addr, text in blocks:
+        if not addr.startswith("resource.aws_apigatewayv2_stage."):
+            continue
+        api = re.search(r"\bapi_id\s*=\s*aws_apigatewayv2_api\.(\w+)\.id\b", text)
+        if api and api.group(1) in ws_apis and re.search(r'\bname\s*=\s*"\$default"', text):
+            issues.append(_issue(
+                f"{addr}가 WebSocket API에 \"$default\" 스테이지를 만듭니다. $default 스테이지는 HTTP API 전용이라 "
+                f"terraform apply가 실패합니다.",
+                "WebSocket 스테이지는 이름을 지정하세요 (예: name = var.environment).",
+                category="architecture"))
+    return issues
+
+
 def lint_hcl(terraform_files: Dict[str, str]) -> List[dict]:
     """리소스 내부 설정 결함 목록 (전부 critical/develop)."""
     if not terraform_files:
@@ -538,4 +585,5 @@ def lint_hcl(terraform_files: Dict[str, str]) -> List[dict]:
     return (_rds(blocks) + _rds_engine_version(blocks) + _cloudfront(blocks)
             + _sqs_lambda(blocks) + _security_groups(blocks) + _vpc_endpoints(blocks)
             + _ecs_pass_role(blocks) + _cloudtrail(blocks) + _sns_kms_alarms(blocks)
-            + _eventbridge_kms(blocks) + _cognito_api_auth(blocks))
+            + _eventbridge_kms(blocks) + _cognito_api_auth(blocks)
+            + _apigw_lambda_permission(blocks) + _websocket_default_stage(blocks))
