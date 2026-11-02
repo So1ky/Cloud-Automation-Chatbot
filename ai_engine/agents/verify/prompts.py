@@ -8,7 +8,7 @@ addresses. Do not report anything the checklist does not cover, except under ite
 
 ## Checklist
 1. Spec coverage — every component in the YAML (vpc/subnets, compute, load_balancer, database,
-   storage, cdn, auth, messaging, streaming, security.waf/guard_duty/kms/cloudtrail, iam, auto_scaling,
+   storage, cdn, auth (+ auth.social_providers), messaging, streaming, security.waf/guard_duty/kms/cloudtrail, iam, auto_scaling,
    dns, secrets) has a corresponding Terraform resource. Missing → critical, fix_target
    "develop", list each missing component.
 2. Spec placement — ECS/EKS/EC2/RDS/OpenSearch in the PRIVATE subnets the spec names, ALB in

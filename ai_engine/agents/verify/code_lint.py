@@ -124,6 +124,8 @@ def lint_code(yaml_output: str, terraform_files: dict) -> List[dict]:
         (bool(arch.get("load_balancer")), ("aws_lb", "aws_alb"), "load_balancer", "ALB/NLB"),
         (bool(arch.get("cdn")), ("aws_cloudfront_distribution",), "cdn", "CloudFront"),
         (bool(arch.get("auth")), ("aws_cognito_user_pool",), "auth", "Cognito"),
+        (any(isinstance(a, dict) and a.get("social_providers") for a in (arch.get("auth") or [])),
+         ("aws_cognito_identity_provider",), "auth.social_providers", "소셜 로그인 IdP"),
         (bool(arch.get("api_gateway")), ("aws_api_gateway_rest_api", "aws_apigatewayv2_api"), "api_gateway", "API Gateway"),
         (bool(arch.get("vpc")), ("aws_vpc",), "vpc", "VPC"),
         (bool((arch.get("security") or {}).get("waf")), ("aws_wafv2_web_acl",), "security.waf", "WAF"),

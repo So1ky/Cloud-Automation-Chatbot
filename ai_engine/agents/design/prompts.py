@@ -129,6 +129,13 @@ Security and encryption rules:
     - KMS is used to encrypt data stored in DynamoDB, S3, or RDS.
 26. When the user mentions "login", "회원", "auth", or "user account":
     - ALWAYS add Cognito to the auth section.
+    - When the user mentions social login ("소셜 로그인", "소셜 계정", "구글/카카오/애플/페이스북 로그인",
+      "Google/Kakao/Apple sign-in"), fill auth.social_providers with the named providers. If the user
+      says only "소셜" without naming any, use ["Google", "Kakao"]. Social login IS expressible with
+      this field — never write that it cannot be expressed or leave it out of the design.
+      Do NOT add a secrets entry for the provider client IDs/secrets — they are passed to the
+      identity providers as Terraform variables, and an unreferenced Secrets Manager secret only
+      adds idle cost.
 
 Global service rules:
 27. When the user mentions "global", "worldwide", "전 세계", or multiple regions/countries:

@@ -201,5 +201,53 @@ resource "aws_security_group_rule" "db" {
         self.assertEqual(_run(text), [])
 
 
+POOL = 'resource "aws_cognito_user_pool" "users" {\n  name = "users"\n}\n'
+HTTP_API = 'resource "aws_apigatewayv2_api" "http" {\n  protocol_type = "HTTP"\n}\n'
+WS_API = 'resource "aws_apigatewayv2_api" "ws" {\n  protocol_type = "WEBSOCKET"\n}\n'
+
+
+def _route(name, api, key, authorizer=False):
+    extra = '  authorization_type = "JWT"\n  authorizer_id = aws_apigatewayv2_authorizer.jwt.id\n' if authorizer else ""
+    return f'resource "aws_apigatewayv2_route" "{name}" {{\n  api_id = aws_apigatewayv2_api.{api}.id\n  route_key = "{key}"\n{extra}}}\n'
+
+
+class CognitoApiAuthTests(unittest.TestCase):
+    def test_http_api_without_authorizer_flagged(self):
+        issues = _run(POOL + HTTP_API + _route("default", "http", "$default"))
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]["category"], "security")
+        self.assertIn("HTTP API", issues[0]["description"])
+        self.assertIn("aws_apigatewayv2_authorizer", issues[0]["suggestion"])
+
+    def test_http_api_with_one_protected_route_ok(self):
+        text = POOL + HTTP_API + _route("public", "http", "GET /health") + _route("items", "http", "GET /items", authorizer=True)
+        self.assertEqual(_run(text), [])
+
+    def test_websocket_connect_without_authorizer_flagged(self):
+        text = POOL + WS_API + _route("connect", "ws", "$connect") + _route("send", "ws", "sendMessage")
+        issues = _run(text)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("$connect", issues[0]["description"])
+
+    def test_websocket_connect_with_authorizer_ok(self):
+        self.assertEqual(_run(POOL + WS_API + _route("connect", "ws", "$connect", authorizer=True)), [])
+
+    def test_rest_api_without_cognito_method_flagged(self):
+        text = POOL + 'resource "aws_api_gateway_rest_api" "rest" {\n  name = "rest"\n}\n' \
+            + 'resource "aws_api_gateway_method" "get" {\n  rest_api_id = aws_api_gateway_rest_api.rest.id\n  authorization = "NONE"\n}\n'
+        issues = _run(text)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("REST API", issues[0]["description"])
+
+    def test_rest_api_with_cognito_authorizer_ok(self):
+        text = POOL + 'resource "aws_api_gateway_rest_api" "rest" {\n  name = "rest"\n}\n' \
+            + 'resource "aws_api_gateway_authorizer" "cog" {\n  rest_api_id = aws_api_gateway_rest_api.rest.id\n  type = "COGNITO_USER_POOLS"\n}\n' \
+            + 'resource "aws_api_gateway_method" "get" {\n  rest_api_id = aws_api_gateway_rest_api.rest.id\n  authorization = "COGNITO_USER_POOLS"\n  authorizer_id = aws_api_gateway_authorizer.cog.id\n}\n'
+        self.assertEqual(_run(text), [])
+
+    def test_no_cognito_means_no_check(self):
+        self.assertEqual(_run(HTTP_API + _route("default", "http", "$default")), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -207,9 +207,11 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
 
     # ── 5. API Gateway ──────────────────────────────────────────────────────
     apigw_names: list[str] = []
+    apigw_targets: dict[str, str | None] = {}   # API GW → 명세의 target 컴퓨팅 (화살표를 그 대상에만)
     for item in arch.get("api_gateway", []):
         rid = item["name"]
         apigw_names.append(rid)
+        apigw_targets[rid] = item.get("target")
         resources[rid] = {"Type": "AWS::ApiGateway::RestApi"}
         cloud_entry.append(rid)
 
@@ -583,9 +585,10 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
                               "Target": st, "TargetPosition": "N",
                               "TargetArrowHead": arrow})
 
-    # API GW → Compute
+    # API GW → Compute (target이 지정돼 있으면 그 컴퓨팅에만 — 전부 이으면 직렬 사슬처럼 보인다)
     for apigw in apigw_names:
-        for comp in compute_names:
+        target = apigw_targets.get(apigw)
+        for comp in ([target] if target in compute_names else compute_names):
             links.append({"Source": apigw, "SourcePosition": "S",
                           "Target": comp, "TargetPosition": "N",
                           "TargetArrowHead": arrow})
