@@ -131,8 +131,10 @@ Generate exactly 4 Terraform files:
     authorizer_id = aws_apigatewayv2_authorizer.<api>_jwt.id (a route may stay public only when the
     spec explicitly says so, e.g. a health check).
   - WebSocket API (protocol_type "WEBSOCKET"): JWT authorizers are not supported, so generate a
-    dedicated authorizer Lambda (aws_lambda_function "<api>_authorizer" + aws_lambda_permission for
-    apigateway.amazonaws.com) that validates the Cognito JWT, plus
+    dedicated authorizer Lambda (aws_lambda_function "<api>_authorizer") that validates the Cognito
+    JWT, its aws_lambda_permission with principal apigateway.amazonaws.com and
+    source_arn = "${aws_apigatewayv2_api.<api>.execution_arn}/authorizers/*" (a bare execution_arn
+    without a suffix never matches the caller, so every $connect is rejected with 403), plus
     resource "aws_apigatewayv2_authorizer" "<api>_request" {
       api_id           = aws_apigatewayv2_api.<api>.id
       authorizer_type  = "REQUEST"
@@ -141,6 +143,8 @@ Generate exactly 4 Terraform files:
       name             = "<api>-cognito"
     }
     and the "$connect" route gets authorization_type = "CUSTOM", authorizer_id = that authorizer.
+    The WebSocket aws_apigatewayv2_stage needs a named stage (name = var.environment) — the
+    "$default" stage exists only for HTTP APIs and fails at apply time on WebSocket APIs.
   - REST API (aws_api_gateway_rest_api): aws_api_gateway_authorizer { type = "COGNITO_USER_POOLS",
     provider_arns = [aws_cognito_user_pool.<name>.arn], rest_api_id = ... } and every protected
     aws_api_gateway_method gets authorization = "COGNITO_USER_POOLS" + authorizer_id.
