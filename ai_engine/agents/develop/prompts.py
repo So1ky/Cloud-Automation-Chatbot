@@ -114,6 +114,52 @@ Generate exactly 4 Terraform files:
     name         = "<name>-client"
     user_pool_id = aws_cognito_user_pool.<name>.id
   }
+- A user pool that is not attached to the API entry point protects nothing — the API stays open to
+  anyone. When the spec has BOTH auth and api_gateway, ALWAYS wire the authorizer:
+  - HTTP API (aws_apigatewayv2_api protocol_type "HTTP"):
+    resource "aws_apigatewayv2_authorizer" "<api>_jwt" {
+      api_id           = aws_apigatewayv2_api.<api>.id
+      authorizer_type  = "JWT"
+      identity_sources = ["$request.header.Authorization"]
+      name             = "<api>-cognito"
+      jwt_configuration {
+        audience = [aws_cognito_user_pool_client.<name>_client.id]
+        issuer   = "https://${aws_cognito_user_pool.<name>.endpoint}"
+      }
+    }
+    and EVERY aws_apigatewayv2_route gets authorization_type = "JWT" and
+    authorizer_id = aws_apigatewayv2_authorizer.<api>_jwt.id (a route may stay public only when the
+    spec explicitly says so, e.g. a health check).
+  - WebSocket API (protocol_type "WEBSOCKET"): JWT authorizers are not supported, so generate a
+    dedicated authorizer Lambda (aws_lambda_function "<api>_authorizer" + aws_lambda_permission for
+    apigateway.amazonaws.com) that validates the Cognito JWT, plus
+    resource "aws_apigatewayv2_authorizer" "<api>_request" {
+      api_id           = aws_apigatewayv2_api.<api>.id
+      authorizer_type  = "REQUEST"
+      authorizer_uri   = aws_lambda_function.<api>_authorizer.invoke_arn
+      identity_sources = ["route.request.querystring.token"]
+      name             = "<api>-cognito"
+    }
+    and the "$connect" route gets authorization_type = "CUSTOM", authorizer_id = that authorizer.
+  - REST API (aws_api_gateway_rest_api): aws_api_gateway_authorizer { type = "COGNITO_USER_POOLS",
+    provider_arns = [aws_cognito_user_pool.<name>.arn], rest_api_id = ... } and every protected
+    aws_api_gateway_method gets authorization = "COGNITO_USER_POOLS" + authorizer_id.
+- When auth.social_providers is non-empty, ALWAYS generate for EACH provider:
+  - resource "aws_cognito_identity_provider" "<provider>" — Google/Facebook/SignInWithApple use the
+    native provider_type with provider_details { client_id = var.<provider>_client_id,
+    client_secret = var.<provider>_client_secret, authorize_scopes = "openid email profile" } and
+    attribute_mapping { email = "email", username = "sub" }. Kakao is NOT native: use
+    provider_type = "OIDC", provider_name = "Kakao", provider_details { oidc_issuer =
+    "https://kauth.kakao.com", client_id/client_secret from variables, authorize_scopes =
+    "openid account_email", attributes_request_method = "GET" }.
+    Credentials are variables with description and sensitive = true — NEVER literal values.
+  - resource "aws_cognito_user_pool_domain" "<name>" { domain = "${var.project_name}-${var.environment}-auth"
+    user_pool_id = aws_cognito_user_pool.<name>.id } (the hosted UI endpoint the providers redirect to).
+  - On the user pool client: supported_identity_providers = ["COGNITO", "<Provider>", ...],
+    allowed_oauth_flows_user_pool_client = true, allowed_oauth_flows = ["code"],
+    allowed_oauth_scopes = ["openid", "email", "profile"], callback_urls = [var.oauth_callback_url],
+    logout_urls = [var.oauth_callback_url], and depends_on = [every aws_cognito_identity_provider]
+    (the client fails to create if a listed provider does not exist yet).
 
 - When the spec includes security.waf = true, ALWAYS generate the ACL WITH AWS managed rules —
   an ACL with only `default_action allow {}` and no rules provides NO protection and fails review:
@@ -433,7 +479,8 @@ Generate exactly 4 Terraform files:
   itself the public entry point (not a CloudFront origin — see ALB Rule).
 - IAM policies: Resource must be the specific ARNs (aws_s3_bucket.x.arn and "${...arn}/*",
   aws_sqs_queue.x.arn, aws_dynamodb_table.x.arn, aws_sns_topic.x.arn, the EC2 instance ARN
-  for ec2:StartInstances/StopInstances). Resource = "*" ONLY for actions that have no
+  for ec2:StartInstances/StopInstances, aws_cognito_user_pool.x.arn for cognito-idp:* — never
+  the pool .id, which is not an ARN and silently never matches). Resource = "*" ONLY for actions that have no
   resource-level permissions (ec2:Describe*, logs:CreateLogGroup, xray). ECS: a separate
   execution role with AmazonECSTaskExecutionRolePolicy attached, plus a task role scoped to
   the services the container uses.

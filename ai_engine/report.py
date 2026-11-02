@@ -27,6 +27,9 @@ SUMMARY_PROMPT = """당신은 클라우드 인프라 컨설턴트입니다. AI�
    - 사용자가 무엇을 하면 되는지 구체적 행동 한 가지
 4. 비용 정보가 있으면 "## 예상 비용" 섹션에 월 예상 비용과 비용의 대부분을 차지하는
    리소스 2~3개를 언급. 절감 팁이 있으면 한 줄 덧붙이기.
+   usage_based_only가 true이면(총액 1달러 미만) "비용이 발생하는 리소스가 없다"고 쓰지 말 것 —
+   Lambda·API Gateway·DynamoDB 온디맨드·S3처럼 요청 수·실행 시간·저장 용량에 비례해 과금되는
+   리소스라 트래픽이 없을 때 0에 가까울 뿐이며, 사용량이 늘면 비용이 발생한다고 설명할 것.
 5. verify_attempts가 2 이상일 때만 "AI가 검증 과정에서 발견된 문제를 자동으로 수정했다"는
    취지를 한 문장으로 언급하세요. verify_attempts가 1이면 자동 수정 이야기를 아예 하지 마세요.
 6. 과장하거나 겁주지 말 것. 사실에 없는 내용을 지어내지 말 것.
@@ -52,6 +55,10 @@ def _digest(report: dict, passed: bool) -> dict:
             "suggestion": issue.get("suggestion"),
         })
 
+    try:
+        total = float(cost.get("total_monthly_cost") or 0)
+    except (TypeError, ValueError):
+        total = 0.0
     return {
         "passed": passed,
         "accepted_with_warnings": report.get("accepted_with_warnings", False),
@@ -61,6 +68,8 @@ def _digest(report: dict, passed: bool) -> dict:
         "cost": {
             "skipped": cost.get("skipped", True),
             "total_monthly_cost_usd": cost.get("total_monthly_cost"),
+            # 총액이 1달러 미만 = 사실상 사용량 기반 과금 리소스뿐(서버리스). "과금 리소스 없음"으로 오해하지 않게 표시
+            "usage_based_only": not cost.get("skipped", True) and total < 1.0 and bool(cost.get("resources")),
             "top_resources": (cost.get("resources") or [])[:3],
             "finops_tips": [f.get("policy") for f in (cost.get("finops_issues") or [])[:3]],
         },
@@ -87,7 +96,10 @@ def _fallback_summary(digest: dict) -> str:
                 lines.append(f"  - 권장 조치: {issue['suggestion']}")
 
     cost = digest["cost"]
-    if not cost["skipped"] and cost["total_monthly_cost_usd"]:
+    if cost.get("usage_based_only"):
+        lines.append("\n## 예상 비용\n- 고정 비용이 거의 없는 사용량 기반 구성입니다. 트래픽이 없을 때는 0에 가깝고, "
+                     "요청 수·실행 시간·저장 용량에 비례해 비용이 발생합니다.")
+    elif not cost["skipped"] and cost["total_monthly_cost_usd"]:
         try:
             total = f"${float(cost['total_monthly_cost_usd']):,.2f}"
         except (TypeError, ValueError):

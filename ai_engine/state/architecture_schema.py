@@ -121,6 +121,11 @@ class Auth(BaseModel):
     type: Literal["Cognito"] = "Cognito"
     user_pool: str
     app_client: str
+    social_providers: List[Literal["Google", "Apple", "Facebook", "Kakao"]] = Field(
+        default_factory=list,
+        description="Social login providers federated into the user pool. Fill when the user asks for "
+                    "social / Google / Kakao / Apple login; empty list means email/password only.",
+    )
 
 
 class Secrets(BaseModel):
