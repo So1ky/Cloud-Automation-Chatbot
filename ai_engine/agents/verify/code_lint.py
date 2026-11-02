@@ -126,6 +126,9 @@ def lint_code(yaml_output: str, terraform_files: dict) -> List[dict]:
         (bool(arch.get("auth")), ("aws_cognito_user_pool",), "auth", "Cognito"),
         (any(isinstance(a, dict) and a.get("social_providers") for a in (arch.get("auth") or [])),
          ("aws_cognito_identity_provider",), "auth.social_providers", "소셜 로그인 IdP"),
+        # 소셜 로그인은 호스티드 UI 도메인이 없으면 공급자 리다이렉트 자체가 불가능하다
+        (any(isinstance(a, dict) and a.get("social_providers") for a in (arch.get("auth") or [])),
+         ("aws_cognito_user_pool_domain",), "auth.social_providers", "Cognito 호스티드 도메인(aws_cognito_user_pool_domain)"),
         (bool(arch.get("api_gateway")), ("aws_api_gateway_rest_api", "aws_apigatewayv2_api"), "api_gateway", "API Gateway"),
         (bool(arch.get("vpc")), ("aws_vpc",), "vpc", "VPC"),
         (bool((arch.get("security") or {}).get("waf")), ("aws_wafv2_web_acl",), "security.waf", "WAF"),

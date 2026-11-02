@@ -145,6 +145,10 @@ def generate_user_summary(
         ])
         text = (response.content or "").strip()
         if text:
+            # 서버리스(총액 ≈ 0)에서 LLM이 비용 섹션을 빼거나 "과금 리소스 없음"으로 쓰는 일이 잦아 결정적으로 보강
+            if digest["cost"].get("usage_based_only") and "사용량" not in text:
+                text += ("\n\n## 예상 비용\n고정 비용이 거의 없는 사용량 기반 구성입니다. 트래픽이 없을 때는 0에 가깝고, "
+                         "요청 수·실행 시간·저장 용량에 비례해 비용이 발생합니다.")
             return text
     except Exception as e:
         print(f"[리포트] 설명문 LLM 생성 실패 → 템플릿 사용: {e}")

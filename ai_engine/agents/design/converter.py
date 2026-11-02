@@ -434,9 +434,19 @@ def convert_to_diagram_yaml(arch: dict) -> dict:
         aws_cloud_children.extend(support_items)        # ECR, KMS, Cognito 등
     else:
         # Serverless: 진입점 → Streaming → Compute (DB/Storage는 섹션 10에서 OutputStack으로 추가)
-        aws_cloud_children.extend(cloud_entry)
-        aws_cloud_children.extend(cloud_streaming)
-        aws_cloud_children.extend(cloud_compute)
+        # 진입점·컴퓨팅이 여럿이면(HTTP API + WebSocket API 등) 세로로 쌓지 않고 가로로 —
+        # 세로면 API GW → API GW → Lambda → Lambda 직렬 사슬처럼 보인다
+        for stack_name, members in (("EntryStack", cloud_entry), ("ComputeStack", cloud_compute)):
+            if len(members) > 1:
+                resources[stack_name] = {
+                    "Type": "AWS::Diagram::HorizontalStack",
+                    "Children": members,
+                }
+                aws_cloud_children.append(stack_name)
+            else:
+                aws_cloud_children.extend(members)
+            if stack_name == "EntryStack":
+                aws_cloud_children.extend(cloud_streaming)
         aws_cloud_children.extend(cloud_notification)
         aws_cloud_children.extend(support_items)
 
