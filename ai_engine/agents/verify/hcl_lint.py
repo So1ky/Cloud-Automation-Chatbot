@@ -16,6 +16,10 @@ code_lint가 "명세 컴포넌트가 코드에 있는가"를 보는 데 비해, 
     R8 EventBridge 규칙 타깃/Scheduler가 ECS 태스크를 실행하는데 그 역할에 iam:PassRole 없음
     R9 CloudTrail 대상 S3 버킷 정책에 cloudtrail 주체의 s3:GetBucketAcl + s3:PutObject 없음
     R10 CloudTrail → CloudWatch Logs 역할에 logs:CreateLogStream/PutLogEvents 없음 (또는 역할 자체 누락)
+    R11 KMS 암호화 SNS를 CloudWatch 알람이 쓰는데 키 정책에 cloudwatch 주체 없음
+    R12 EventBridge 대상 SQS/SNS가 KMS 암호화인데 키 정책에 events 주체 없음
+    R13 Cognito User Pool이 있는데 API Gateway에 authorizer가 연결되지 않음 (HTTP API 라우트 /
+        WebSocket $connect / REST 메서드) → 로그인 없이 누구나 API 호출 가능
 """
 
 from __future__ import annotations
@@ -469,6 +473,63 @@ def _eventbridge_kms(blocks) -> List[dict]:
     return issues
 
 
+def _cognito_api_auth(blocks) -> List[dict]:
+    """R13: Cognito User Pool이 있으면 API Gateway 진입점에 authorizer가 연결되어야 한다.
+
+    User Pool만 만들고 라우트에 안 붙이면 apply는 성공하지만 API는 로그인 없이 열려 있다.
+    일부 라우트에만 붙어 있으면 공개 라우트로 보고 통과시킨다(나머지 판단은 LLM 몫).
+    ALB는 앱이 직접 JWT를 검증하는 패턴이 흔해 판정하지 않는다.
+    """
+    if not any(addr.startswith("resource.aws_cognito_user_pool.") for addr, _ in blocks):
+        return []
+    issues = []
+    v2_routes = [(addr, text) for addr, text in blocks if addr.startswith("resource.aws_apigatewayv2_route.")]
+    for addr, text in blocks:
+        if addr.startswith("resource.aws_apigatewayv2_api."):
+            api = addr.split(".")[-1]
+            proto = re.search(r'\bprotocol_type\s*=\s*"(\w+)"', text)
+            proto = proto.group(1).upper() if proto else "HTTP"
+            mine = [t for _, t in v2_routes
+                    if re.search(rf"\bapi_id\s*=\s*aws_apigatewayv2_api\.{re.escape(api)}\.id\b", t)]
+            if proto == "WEBSOCKET":
+                connect = [t for t in mine if re.search(r'\broute_key\s*=\s*"\$connect"', t)]
+                if connect and not any(re.search(r"\bauthorizer_id\s*=", t) for t in connect):
+                    issues.append(_issue(
+                        f"{addr}(WebSocket)의 $connect 라우트에 authorizer가 없어 Cognito 로그인 없이도 "
+                        f"누구나 연결해 메시지를 보낼 수 있습니다.",
+                        "aws_apigatewayv2_authorizer(authorizer_type = \"REQUEST\", identity_sources = "
+                        "[\"route.request.querystring.token\"])와 Cognito JWT를 검증하는 authorizer Lambda를 만들고 "
+                        "$connect 라우트에 authorization_type = \"CUSTOM\", authorizer_id를 지정하세요."))
+            elif mine and not any(re.search(r"\bauthorizer_id\s*=", t) for t in mine):
+                issues.append(_issue(
+                    f"{addr}(HTTP API)의 라우트 어디에도 authorizer가 없어 Cognito User Pool이 있어도 "
+                    f"API는 로그인 없이 누구나 호출할 수 있습니다.",
+                    "aws_apigatewayv2_authorizer(authorizer_type = \"JWT\", jwt_configuration { issuer = "
+                    "\"https://${aws_cognito_user_pool.<name>.endpoint}\", audience = [client id] })를 만들고 "
+                    "보호할 라우트마다 authorization_type = \"JWT\", authorizer_id를 지정하세요."))
+        elif addr.startswith("resource.aws_api_gateway_rest_api."):
+            api = addr.split(".")[-1]
+            ref = rf"aws_api_gateway_rest_api\.{re.escape(api)}\.id\b"
+            has_authorizer = any(
+                a.startswith("resource.aws_api_gateway_authorizer.")
+                and re.search(rf"\brest_api_id\s*=\s*{ref}", t)
+                and re.search(r'\btype\s*=\s*"COGNITO_USER_POOLS"', t)
+                for a, t in blocks)
+            has_method = any(
+                a.startswith("resource.aws_api_gateway_method.")
+                and re.search(rf"\brest_api_id\s*=\s*{ref}", t)
+                and re.search(r'\bauthorization\s*=\s*"COGNITO_USER_POOLS"', t)
+                for a, t in blocks)
+            if not (has_authorizer and has_method):
+                issues.append(_issue(
+                    f"{addr}(REST API)에 Cognito authorizer가 연결된 메서드가 없어 로그인 없이 누구나 "
+                    f"호출할 수 있습니다.",
+                    "aws_api_gateway_authorizer(type = \"COGNITO_USER_POOLS\", provider_arns = "
+                    "[aws_cognito_user_pool.<name>.arn])를 만들고 보호할 aws_api_gateway_method에 "
+                    "authorization = \"COGNITO_USER_POOLS\", authorizer_id를 지정하세요."))
+    return issues
+
+
 def lint_hcl(terraform_files: Dict[str, str]) -> List[dict]:
     """리소스 내부 설정 결함 목록 (전부 critical/develop)."""
     if not terraform_files:
@@ -477,4 +538,4 @@ def lint_hcl(terraform_files: Dict[str, str]) -> List[dict]:
     return (_rds(blocks) + _rds_engine_version(blocks) + _cloudfront(blocks)
             + _sqs_lambda(blocks) + _security_groups(blocks) + _vpc_endpoints(blocks)
             + _ecs_pass_role(blocks) + _cloudtrail(blocks) + _sns_kms_alarms(blocks)
-            + _eventbridge_kms(blocks))
+            + _eventbridge_kms(blocks) + _cognito_api_auth(blocks))
