@@ -138,3 +138,14 @@ FINOPS_TRANSLATE_PROMPT = """Infracost가 생성한 영어 FinOps 비용 최적�
 4. 내용을 지어내거나 빼지 말 것 — 의미를 보존한 번역만 할 것.
 5. 번역문에 번호("1.")나 정책명 대괄호는 붙이지 말고 문장만 반환할 것.
 """
+
+# 사용량 기반 비용 추정용 — 요구사항에서 서비스 규모(월 사용자 수)만 추출
+USAGE_SCALE_PROMPT = """Extract the service's user scale from the user's infrastructure requirements.
+
+Rules:
+1. Return monthly_active_users only if the requirements state a number of users
+   (e.g. "월 1만 명" -> 10000, "MAU 50만" -> 500000, "회원 3천 명" -> 3000).
+2. If only daily active users are stated (e.g. "DAU 3천", "하루 3천 명"), return daily users x 3.
+3. If no user count is stated (or only concurrent connections, TPS, or data sizes), return null.
+4. Never guess a number that is not derivable from the text.
+"""

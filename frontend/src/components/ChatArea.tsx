@@ -9,6 +9,10 @@ interface CostEstimate {
   potential_yearly_savings?: string | null;
   resources?: { name: string; monthly_cost: string }[];
   finops_issues?: { policy: string; message?: string; resources?: string[] }[];
+  // 사용량 과금 리소스뿐이라 총액이 0에 가까운 구성 (추정 없음)
+  usage_based_only?: boolean;
+  // 요구사항의 서비스 규모로 사용량을 가정해 추정한 경우
+  usage_assumptions?: { monthly_active_users: number; notes?: string[] } | null;
 }
 
 interface Message {
@@ -250,6 +254,7 @@ function CostCard({ cost }: { cost: CostEstimate }) {
   const resources = (cost.resources || []).slice(0, 5);
   const savings = formatUsd(cost.potential_yearly_savings);
   const finops = cost.finops_issues || [];
+  const assumptions = cost.usage_assumptions;
 
   return (
     <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 shadow-inner">
@@ -264,10 +269,26 @@ function CostCard({ cost }: { cost: CostEstimate }) {
         예상 비용 (Infracost)
       </div>
 
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-2xl font-extrabold text-emerald-800">{total}</span>
-        <span className="text-sm font-medium text-emerald-700">/ 월 ({currency})</span>
-      </div>
+      {cost.usage_based_only ? (
+        <>
+          <div className="text-2xl font-extrabold text-emerald-800">고정 비용 $0</div>
+          <p className="mt-1 text-[13px] text-slate-700">
+            요청 수·실행 시간·저장 용량 등 사용량에 따라 과금됩니다.
+          </p>
+        </>
+      ) : (
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-2xl font-extrabold text-emerald-800">{total}</span>
+          <span className="text-sm font-medium text-emerald-700">/ 월 ({currency})</span>
+        </div>
+      )}
+
+      {assumptions && (
+        <p className="mt-1 text-[13px] text-slate-700">
+          월 사용자 {assumptions.monthly_active_users.toLocaleString("ko-KR")}명 기준 추정
+          {assumptions.notes?.length ? ` · ${assumptions.notes.join(", ")}` : ""}
+        </p>
+      )}
 
       {resources.length > 0 && (
         <ul className="mt-3 space-y-1">

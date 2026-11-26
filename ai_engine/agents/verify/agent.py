@@ -34,6 +34,7 @@ from ai_engine.agents.verify.prompts import (
 from ai_engine.agents.verify.spec_lint import lint_spec
 from ai_engine.config import get_llm
 from ai_engine.agents.verify.tools import run_infracost, run_terraform_validate
+from ai_engine.agents.verify.usage import build_usage, extract_monthly_users
 from ai_engine.state.graph_state import GraphState
 
 
@@ -248,17 +249,30 @@ def verify_node(state: GraphState) -> dict:
 
     # 4. Infracost 비용 분석 (통과/실패 판정에는 미반영 — 리포트 용도)
     print("[검증 에이전트] Infracost 비용 분석 중...")
-    cost = run_infracost(terraform_files)
+    # 요구사항에 서비스 규모가 있으면 사용량 가정을 만들어 사용량 과금 리소스 비용에 반영
+    monthly_users = extract_monthly_users(user_requirements)
+    usage, usage_notes = build_usage(terraform_files, monthly_users) if monthly_users else ({}, [])
+    cost = run_infracost(terraform_files, usage or None)
+    cost["usage_assumptions"] = (
+        {"monthly_active_users": monthly_users, "notes": usage_notes}
+        if usage and not cost["skipped"] else None
+    )
+    cost["usage_based_only"] = False
     if cost["skipped"]:
         print(f"[검증 에이전트] Infracost 건너뜀: {cost['reason']}")
     else:
         _translate_finops_messages(cost.get("finops_issues") or [])
         try:
-            monthly = f"{float(cost['total_monthly_cost']):,.2f}"
+            total = float(cost["total_monthly_cost"])
+            monthly = f"{total:,.2f}"
+            # 추정 없이 총액이 1달러 미만 = 사실상 사용량 과금 리소스뿐(서버리스). "0달러"로 오해하지 않게 표시
+            cost["usage_based_only"] = not usage and total < 1.0
         except (TypeError, ValueError):
             monthly = str(cost["total_monthly_cost"])
         print(f"[검증 에이전트] 월간 예상 비용: {monthly} {cost['currency']} "
               f"(비용 최적화 제안 {len(cost.get('finops_issues', []))}건)")
+        if usage:
+            print(f"[검증 에이전트] 사용량 추정 기준: 월 {monthly_users:,}명, {', '.join(usage_notes)}")
 
     # ─── 통과 판정 및 Self-Healing 라우팅 ───────────────────────────────
     # 수렴 보장 원칙:

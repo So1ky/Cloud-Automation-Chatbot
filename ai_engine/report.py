@@ -9,6 +9,7 @@ LLM 호출이 실패해도 설명문 없이 파이프라인이 죽지 않도록 
 from __future__ import annotations
 
 import json
+import re
 from typing import List
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -27,9 +28,11 @@ SUMMARY_PROMPT = """당신은 클라우드 인프라 컨설턴트입니다. AI�
    - 사용자가 무엇을 하면 되는지 구체적 행동 한 가지
 4. 비용 정보가 있으면 "## 예상 비용" 섹션에 월 예상 비용과 비용의 대부분을 차지하는
    리소스 2~3개를 언급. 절감 팁이 있으면 한 줄 덧붙이기.
-   usage_based_only가 true이면(총액 1달러 미만) "비용이 발생하는 리소스가 없다"고 쓰지 말 것 —
-   Lambda·API Gateway·DynamoDB 온디맨드·S3처럼 요청 수·실행 시간·저장 용량에 비례해 과금되는
-   리소스라 트래픽이 없을 때 0에 가까울 뿐이며, 사용량이 늘면 비용이 발생한다고 설명할 것.
+   usage_based_only가 true이면(총액 1달러 미만) "월 예상 비용이 0달러"라거나 "비용이 발생하는
+   리소스가 없다"고 쓰지 말 것 — 금액 대신 "고정 비용은 없고 사용량에 따라 과금되는 구성"이라고 쓰고,
+   Lambda·API Gateway·DynamoDB 온디맨드·S3처럼 요청 수·실행 시간·저장 용량에 비례해 과금된다고 설명할 것.
+   usage_assumptions가 있으면 total_monthly_cost_usd는 그 가정으로 계산한 추정치다 —
+   "월 사용자 N명 기준 약 $X(가정에 따른 추정치)"로 쓰고 notes의 가정을 한 문장으로 덧붙일 것.
 5. verify_attempts가 2 이상일 때만 "AI가 검증 과정에서 발견된 문제를 자동으로 수정했다"는
    취지를 한 문장으로 언급하세요. verify_attempts가 1이면 자동 수정 이야기를 아예 하지 마세요.
 6. 과장하거나 겁주지 말 것. 사실에 없는 내용을 지어내지 말 것.
@@ -55,10 +58,6 @@ def _digest(report: dict, passed: bool) -> dict:
             "suggestion": issue.get("suggestion"),
         })
 
-    try:
-        total = float(cost.get("total_monthly_cost") or 0)
-    except (TypeError, ValueError):
-        total = 0.0
     return {
         "passed": passed,
         "accepted_with_warnings": report.get("accepted_with_warnings", False),
@@ -68,13 +67,54 @@ def _digest(report: dict, passed: bool) -> dict:
         "cost": {
             "skipped": cost.get("skipped", True),
             "total_monthly_cost_usd": cost.get("total_monthly_cost"),
-            # 총액이 1달러 미만 = 사실상 사용량 기반 과금 리소스뿐(서버리스). "과금 리소스 없음"으로 오해하지 않게 표시
-            # (resources는 비용 > 0인 것만 담기므로 전부 사용량 과금이면 빈 목록 — 조건에 넣으면 안 됨)
-            "usage_based_only": not cost.get("skipped", True) and total < 1.0,
+            # 사용량 과금 리소스뿐이라 총액이 0에 가까운 경우 (verify_node가 판정)
+            "usage_based_only": bool(cost.get("usage_based_only")),
+            # 요구사항의 서비스 규모로 사용량을 가정해 추정한 경우 {"monthly_active_users", "notes"}
+            "usage_assumptions": cost.get("usage_assumptions"),
             "top_resources": (cost.get("resources") or [])[:3],
             "finops_tips": [f.get("policy") for f in (cost.get("finops_issues") or [])[:3]],
         },
     }
+
+
+_USAGE_BASED_COST_SECTION = (
+    "## 예상 비용\n고정 비용은 없고 사용량에 따라 과금되는 구성입니다. 트래픽이 없을 때는 0에 가깝고, "
+    "요청 수·실행 시간·저장 용량에 비례해 비용이 발생합니다."
+)
+# "0달러", "$0", "$0.00" 같은 총액 0 표현 (10달러·$0.40 등은 제외)
+_ZERO_COST_RE = re.compile(r"(?<![\d.,])0(?:\.0+)?\s*달러|\$\s*0(?:\.0+)?(?![\d.])")
+
+
+def _fix_usage_based_cost(text: str) -> str:
+    """사용량 과금 구성인데 LLM이 비용 섹션을 빼거나 "0달러"로 쓴 경우 결정적 문구로 바로잡는다."""
+    section = re.search(r"^## 예상 비용[^\n]*\n.*?(?=^## |\Z)", text, flags=re.MULTILINE | re.DOTALL)
+    if section is None:
+        if "사용량" in text and not _ZERO_COST_RE.search(text):
+            return text
+        return text + "\n\n" + _USAGE_BASED_COST_SECTION
+    # 섹션 뒤에 제목 없는 다른 문단이 이어질 수 있으므로, "0달러" 문단만 빼고 나머지는 보존한다
+    body = section.group(0).partition("\n")[2]
+    blocks = [b for b in re.split(r"\n\s*\n", body) if b.strip()]
+    kept = [b for b in blocks if not _ZERO_COST_RE.search(b)]
+    if len(kept) == len(blocks) and "사용량" in body:
+        return text
+    fixed = "\n\n".join([_USAGE_BASED_COST_SECTION] + kept)
+    return text[:section.start()] + fixed + "\n\n" + text[section.end():]
+
+
+def _add_usage_assumptions(text: str, assumptions: dict) -> str:
+    """추정 금액인데 LLM이 기준(월 사용자 수)을 빠뜨린 경우 비용 섹션 끝에 결정적으로 덧붙인다."""
+    users = f"{assumptions['monthly_active_users']:,}명"
+    if users in text:
+        return text
+    note = f"※ 위 금액은 월 사용자 {users} 기준으로 사용량을 가정한 추정치입니다"
+    if assumptions.get("notes"):
+        note += f" (가정: {', '.join(assumptions['notes'])})"
+    note += ". 실제 비용은 사용량에 따라 달라집니다."
+    section = re.search(r"^## 예상 비용[^\n]*\n.*?(?=^## |\Z)", text, flags=re.MULTILINE | re.DOTALL)
+    if section is None:
+        return text + "\n\n" + note
+    return text[:section.end()].rstrip() + "\n\n" + note + "\n\n" + text[section.end():]
 
 
 def _fallback_summary(digest: dict) -> str:
@@ -98,14 +138,20 @@ def _fallback_summary(digest: dict) -> str:
 
     cost = digest["cost"]
     if cost.get("usage_based_only"):
-        lines.append("\n## 예상 비용\n- 고정 비용이 거의 없는 사용량 기반 구성입니다. 트래픽이 없을 때는 0에 가깝고, "
-                     "요청 수·실행 시간·저장 용량에 비례해 비용이 발생합니다.")
+        lines.append("\n" + _USAGE_BASED_COST_SECTION)
     elif not cost["skipped"] and cost["total_monthly_cost_usd"]:
         try:
             total = f"${float(cost['total_monthly_cost_usd']):,.2f}"
         except (TypeError, ValueError):
             total = str(cost["total_monthly_cost_usd"])
-        lines.append(f"\n## 예상 비용\n- 월 예상 비용: 약 {total} (USD)")
+        assumptions = cost.get("usage_assumptions")
+        if assumptions:
+            lines.append(f"\n## 예상 비용\n- 월 사용자 {assumptions['monthly_active_users']:,}명 기준 "
+                         f"약 {total} (USD, 가정에 따른 추정치)")
+            if assumptions.get("notes"):
+                lines.append(f"- 가정: {', '.join(assumptions['notes'])}")
+        else:
+            lines.append(f"\n## 예상 비용\n- 월 예상 비용: 약 {total} (USD)")
         for res in cost["top_resources"]:
             try:
                 lines.append(f"- {res['name']}: ${float(res['monthly_cost']):,.2f}/월")
@@ -146,11 +192,12 @@ def generate_user_summary(
         ])
         text = (response.content or "").strip()
         if text:
-            # 서버리스(총액 ≈ 0)에서 LLM이 비용 섹션을 빼거나 "과금 리소스 없음"으로 쓰는 일이 잦아 결정적으로 보강
-            if digest["cost"].get("usage_based_only") and "사용량" not in text:
-                text += ("\n\n## 예상 비용\n고정 비용이 거의 없는 사용량 기반 구성입니다. 트래픽이 없을 때는 0에 가깝고, "
-                         "요청 수·실행 시간·저장 용량에 비례해 비용이 발생합니다.")
-            return text
+            # 서버리스(총액 ≈ 0)에서 LLM이 비용 섹션을 빼거나 "월 0달러"로 쓰는 일이 잦아 결정적으로 보강
+            if digest["cost"].get("usage_based_only"):
+                text = _fix_usage_based_cost(text)
+            elif digest["cost"].get("usage_assumptions"):
+                text = _add_usage_assumptions(text, digest["cost"]["usage_assumptions"])
+            return text.rstrip()
     except Exception as e:
         print(f"[리포트] 설명문 LLM 생성 실패 → 템플릿 사용: {e}")
 
