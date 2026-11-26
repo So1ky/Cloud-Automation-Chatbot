@@ -129,10 +129,11 @@ def _infracost_skip(reason: str) -> dict:
             "potential_yearly_savings": None, "resources": [], "finops_issues": []}
 
 
-def run_infracost(terraform_files: dict) -> dict:
+def run_infracost(terraform_files: dict, usage: Optional[dict] = None) -> dict:
     """Infracost(v2)로 월간 예상 비용과 FinOps 정책 위반을 분석한다. 미설치/미설정 시 skip.
 
     infracost v2는 `breakdown` 대신 `scan`(총비용+FinOps) / `inspect`(리소스별 비용)를 사용한다.
+    usage({"<type>.<name>": {...}})를 주면 사용량 기반 과금 리소스 비용에 반영한다.
 
     Returns:
         {
@@ -159,6 +160,16 @@ def run_infracost(terraform_files: dict) -> dict:
     with tempfile.TemporaryDirectory(prefix="tf_infracost_") as tmp:
         tmp_path = Path(tmp)
         _write_terraform_files(terraform_files, tmp_path)
+        if usage:
+            # v2는 폴더의 usage 파일을 자동 인식하지 않는다 — infracost.yml에 usage_file을 명시해야 반영됨
+            # (JSON은 YAML의 부분집합이라 그대로 기록)
+            (tmp_path / "infracost.usage.yml").write_text(
+                json.dumps({"version": "0.1", "resource_usage": usage}), encoding="utf-8"
+            )
+            (tmp_path / "infracost.yml").write_text(
+                "version: 0.1\nprojects:\n  - path: .\n    name: main\n    usage_file: infracost.usage.yml\n",
+                encoding="utf-8",
+            )
 
         # 1. scan: 총 월비용 + FinOps 정책 검사
         try:
